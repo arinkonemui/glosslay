@@ -80,7 +80,7 @@ C:\Users\arink\source\99.Cloude資料\009_ゲーム翻訳アプリ\01.要件定�
 | オーバーレイ | **外部レイヤードウィンドウ**（Win32） |
 | キーボード入力 | **Raw Input (WM_INPUT)** |
 | ゲームパッド | **Windows.Gaming.Input**（読み取り専用） |
-| OCR | **PaddleOCR (PP-OCRv5)** 既定 / **Windows.Media.Ocr** 高速モード |
+| OCR | **PaddleOCR (PP-OCRv6)** 既定 / **Windows.Media.Ocr** 高速モード |
 | 翻訳 | **ローカルNMT (Opus-MT系 int8 ONNX)** 既定 / **Gemini Flash-Lite系** 上位 |
 | 推論基盤 | **ONNX Runtime**（OCRと翻訳で共有する） |
 
