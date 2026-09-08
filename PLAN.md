@@ -35,11 +35,43 @@ Glosslay.slnx
 
 ### P0-2. 画面キャプチャ
 
-- [ ] Windows.Graphics.Capture でウィンドウキャプチャを実装
-- [ ] `IsBorderRequired = false` でキャプチャ枠を消す
-- [ ] モニタ全体キャプチャも実装し、切替できるようにする
-- [ ] 高DPI環境で座標がずれないことを確認
-- [ ] 排他フルスクリーンのゲームで取得できるか実測する
+- [x] Windows.Graphics.Capture でウィンドウキャプチャを実装
+- [x] `IsBorderRequired = false` でキャプチャ枠を消す — 実測で `IsBorderRemoved=True`
+- [x] モニタ全体キャプチャも実装し、切替できるようにする — `CaptureTargetKind` で切替
+- [x] 高DPI環境で座標がずれないことを確認 — 下表のとおり `app.manifest` の `PerMonitorV2` で解消
+- [ ] 排他フルスクリーンのゲームで取得できるか実測する — **実ゲームが必要。人間の作業**
+
+**実装（すべて `Glosslay.Core/Capture/`）**
+
+| ファイル | 役割 |
+|---|---|
+| `CaptureTarget.cs` | 対象の識別（HWND / HMONITOR）。ウィンドウとモニタの切替（FR-CAP-02） |
+| `CaptureTargetEnumerator.cs` | 対象候補の列挙。非表示・タイトルなし・DWM cloaked を除外 |
+| `D3D11CaptureDevice.cs` | GPU テクスチャ → CPU 読み出し。ステージングテクスチャは使い回す |
+| `ScreenCapture.cs` | WGC セッション本体。`GetNextFrameAsync` で 1 枚取得 |
+| `CapturedFrame.cs` | BGRA32 の 1 フレーム |
+
+**高DPI の実測結果（125% スケーリング環境）**
+
+| | DPI 非対応 | DPI 対応（PerMonitorV2） |
+|---|---|---|
+| `GetMonitorInfo` の報告値 | 1536x864 ❌ ずれる | **1920x1080** ✅ 一致 |
+| WGC の実キャプチャ | 1920x1080 | 1920x1080 |
+
+> WGC は常に物理ピクセルを返すが、Win32 の座標 API は DPI 非対応プロセスでは仮想化された値を返す。
+> `Glosslay.App/app.manifest` の `PerMonitorV2` 宣言が必須（FR-CAP-09）。
+
+**実測値**: セッション開始 31ms（ウィンドウ）/ 289ms（モニタ初回）、初回フレーム取得 9〜23ms。
+
+**判明した設計上の事実**
+
+- Windows 11 では `GraphicsCaptureItem.TryCreateFromWindowId` / `TryCreateFromDisplayId` が射影済みで、
+  **`IGraphicsCaptureItemInterop` の COM 相互運用は不要**
+- 枠なしキャプチャは未パッケージアプリでも
+  `GraphicsCaptureAccess.RequestAccessAsync(Borderless)` が `Allowed` を返す
+
+**依存追加**: `Microsoft.Windows.CsWin32` 0.3.333（2026-09-08 承認済み）。
+D3D11 の COM 相互運用をビルド時生成するソースジェネレータ。`PrivateAssets=all` のため実行時 DLL の同梱はなく、配布サイズ・AV 誤検知への影響はない（RULES.md 🔵）。
 
 ### P0-3. 前処理
 

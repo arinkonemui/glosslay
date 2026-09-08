@@ -13,6 +13,25 @@
     <!-- 名前空間は Glosslay 起点（AGENTS.md 命名規約）。
          例: Capture/ 配下は Glosslay.Capture になる。 -->
     <RootNamespace>Glosslay</RootNamespace>
+
+    <!-- CsWin32 が生成する COM 相互運用コードがポインタを使うため必須。
+         Directory.Build.props では定義していないプロジェクト固有の設定。 -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Microsoft.Windows.CsWin32 — Win32 / COM の P/Invoke をビルド時に C# 生成する
+      ソースジェネレータ。生成対象は NativeMethods.txt に列挙したものだけ。
+
+      PrivateAssets=all のため実行時 DLL を一切同梱しない。
+      配布サイズ・AV 誤検知への影響はゼロ（RULES.md 🔵「依存関係を増やすときは相談する」に基づき
+      2026-09-08 に人間の承認を得て追加）。
+    -->
+    <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.333">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
 
 </Project>

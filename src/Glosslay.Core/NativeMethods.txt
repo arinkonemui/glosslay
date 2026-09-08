@@ -1,0 +1,41 @@
+// CsWin32 の生成対象。ここに書いた API だけがビルド時に C# 生成される。
+// 実行時 DLL は同梱されない（Glosslay.Core.csproj のコメント参照）。
+
+// --- D3D11 デバイス ---
+// WGC のフレームは GPU テクスチャで届くため、CPU へ読み出すのに D3D11 を経由する必要がある。
+// （GPU"推論"は既定で無効という RULES.md の制約とは別の話。キャプチャ経路は WGC の仕様）
+D3D11CreateDevice
+D3D11_CREATE_DEVICE_FLAG
+D3D_DRIVER_TYPE
+ID3D11Device
+ID3D11DeviceContext
+ID3D11Texture2D
+D3D11_TEXTURE2D_DESC
+D3D11_USAGE
+D3D11_BIND_FLAG
+D3D11_CPU_ACCESS_FLAG
+D3D11_MAP
+D3D11_MAPPED_SUBRESOURCE
+IDXGIDevice
+
+// --- WinRT <-> D3D11 の相互変換 ---
+// IDirect3DDevice の生成と、Direct3D11CaptureFrame.Surface からの ID3D11Texture2D 取り出し
+CreateDirect3D11DeviceFromDXGIDevice
+IDirect3DDxgiInterfaceAccess
+
+// NOTE: IGraphicsCaptureItemInterop は不要。
+// Windows 11 では GraphicsCaptureItem.TryCreateFromWindowId / TryCreateFromDisplayId が
+// 射影されており、COM 相互運用なしで対象を作成できる（2026-09-08 に実機で確認済み）。
+
+// --- キャプチャ対象の列挙（ウィンドウ指定 / モニタ全体の切替: FR-CAP-02） ---
+EnumWindows
+IsWindowVisible
+GetWindowTextW
+GetWindowTextLengthW
+GetClientRect
+GetWindowRect
+MonitorFromWindow
+EnumDisplayMonitors
+GetMonitorInfoW
+DwmGetWindowAttribute
+DWMWINDOWATTRIBUTE
