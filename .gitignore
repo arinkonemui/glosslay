@@ -42,6 +42,18 @@ artifacts/
 models/
 *.onnx
 
+# --- Python（PoC の OCR 検証ツール: tools/ocr-eval）---
+# PaddleOCR の検証は Python 側で行う。仮想環境と DL 済みモデルは巨大なため除外する。
+# スクリプト本体はコミットする。
+.venv*/
+venv/
+__pycache__/
+*.pyc
+.paddleocr/
+.paddlex/
+# 計測の出力（画像と JSON）。結果の要約は PLAN.md に残す。
+tools/ocr-eval/results/
+
 # --- APIキー・シークレット ---
 appsettings.*.local.json
 secrets.json
