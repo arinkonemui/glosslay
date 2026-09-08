@@ -43,10 +43,24 @@ internal sealed class D3D11CaptureDevice : IDisposable
     public IDirect3DDevice WinRtDevice { get; }
 
     /// <summary>
+    /// D3D11 デバイスを MTA スレッド上で作成する。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>アパートメントを必ず MTA に揃えること。</b>
+    /// D3D11 の COM オブジェクトはアパートメント間のマーシャリングに対応していない。
+    /// WPF の UI スレッドは STA、WGC の <c>FrameArrived</c> は MTA のプールスレッドで起きるため、
+    /// UI スレッドで作ると読み出し時に QueryInterface が E_NOINTERFACE で失敗する。</para>
+    /// <para>解放は STA から呼んでも問題ないことを実測で確認済み（2026-09-08）。</para>
+    /// </remarks>
+    public static Task<D3D11CaptureDevice> CreateAsync() => Task.Run(Create);
+
+    /// <summary>
     /// D3D11 デバイスを作成する。ハードウェアが使えない環境では WARP（ソフトウェア）へ退避する。
     /// </summary>
-    public static D3D11CaptureDevice Create()
+    private static D3D11CaptureDevice Create()
     {
+        ThrowIfSta("D3D11 デバイスの作成");
+
         // BGRA_SUPPORT は Direct3D11CaptureFramePool に必須。
         // SINGLETHREADED は付けない（フレーム到着がプールスレッドで起きるため）。
         const D3D11_CREATE_DEVICE_FLAG Flags = D3D11_CREATE_DEVICE_FLAG.D3D11_CREATE_DEVICE_BGRA_SUPPORT;
@@ -76,6 +90,21 @@ internal sealed class D3D11CaptureDevice : IDisposable
             "D3D11 デバイスを作成できませんでした。グラフィックドライバが古いか、GPU が利用できない可能性があります。");
     }
 
+    /// <summary>
+    /// STA スレッドからの呼び出しを弾く。
+    /// 黙って E_NOINTERFACE になると原因が分かりにくいため、ここで明示的に失敗させる。
+    /// </summary>
+    private static void ThrowIfSta(string operation)
+    {
+        if (Thread.CurrentThread.GetApartmentState() == ApartmentState.STA)
+        {
+            throw new InvalidOperationException(
+                $"{operation}は MTA スレッドで行う必要があります（現在は STA）。"
+                + "D3D11 の COM オブジェクトはアパートメントをまたげません。"
+                + "UI スレッドから直接呼ばず、Task.Run 経由で実行してください。");
+        }
+    }
+
     /// <summary>D3D11 デバイスを WinRT の <see cref="IDirect3DDevice"/> へ変換する。</summary>
     private static IDirect3DDevice CreateWinRtDevice(ID3D11Device device)
     {
@@ -99,6 +128,7 @@ internal sealed class D3D11CaptureDevice : IDisposable
     public CapturedFrame ReadBack(Direct3D11CaptureFrame frame)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        ThrowIfSta("フレームの読み出し");
 
         // IDirect3DSurface -> ID3D11Texture2D
         var source = frame.Surface.As<IDirect3DDxgiInterfaceAccess>();

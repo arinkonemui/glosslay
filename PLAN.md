@@ -69,9 +69,31 @@ Glosslay.slnx
   **`IGraphicsCaptureItemInterop` の COM 相互運用は不要**
 - 枠なしキャプチャは未パッケージアプリでも
   `GraphicsCaptureAccess.RequestAccessAsync(Borderless)` が `Allowed` を返す
+- **D3D11 の COM オブジェクトはアパートメントをまたげない。**
+  WPF の UI スレッドは STA、WGC の `FrameArrived` は MTA のプールスレッド。
+  UI スレッドで D3D11 デバイスを作ると読み出し時に `E_NOINTERFACE` で失敗する。
+  `ScreenCapture.StartAsync` は内部で `Task.Run` して構築を MTA へ寄せ、
+  `D3D11CaptureDevice` は STA からの呼び出しを明示的に弾く。解放は STA からでも安全（実測）。
+
+| アパートメントの組み合わせ | 結果 |
+|---|---|
+| STA で作成 → MTA から使用 | ❌ 失敗（修正前の WPF がこれ） |
+| MTA で作成 → MTA から使用 | ✅ |
+| MTA で作成 → STA から解放 | ✅ |
+
+> **検証はコンソール（全部 MTA）で済ませてはいけない。** それでは この不具合を取り逃す。
+> STA + `DispatcherSynchronizationContext` を用意して WPF と同じ条件で確認すること。
 
 **依存追加**: `Microsoft.Windows.CsWin32` 0.3.333（2026-09-08 承認済み）。
 D3D11 の COM 相互運用をビルド時生成するソースジェネレータ。`PrivateAssets=all` のため実行時 DLL の同梱はなく、配布サイズ・AV 誤検知への影響はない（RULES.md 🔵）。
+
+**検証台**: `Glosslay.App` の `MainWindow` に最小限の実験用 UI を用意した（UI の作り込みは PoC 対象外のため機能は最小限）。
+排他フルスクリーンの実測と、P0-7 の精度計測用サンプル採取に使う。
+
+- 方式切替（ウィンドウ / モニタ全体）・枠除去・カーソル有無のトグル
+- **5秒後にキャプチャ** — 押してからゲームへ切り替えることで排他フルスクリーンを検証できる
+- **非黒ピクセル率の表示** — ほぼ黒なら取得失敗と判断する材料（FR-CAP-03）
+- PNG 保存先は `%APPDATA%\Glosslay\captures\`（FR-CFG-00）
 
 ### P0-3. 前処理
 

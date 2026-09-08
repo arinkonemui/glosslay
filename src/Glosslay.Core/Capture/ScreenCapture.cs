@@ -78,7 +78,7 @@ public sealed class ScreenCapture : IDisposable
     /// <param name="target">ウィンドウまたはモニタ。</param>
     /// <param name="removeBorder">FR-CAP-07: キャプチャ枠を消すか。</param>
     /// <param name="captureCursor">カーソルを含めるか。OCR の妨げになるため既定は含めない。</param>
-    public static async Task<ScreenCapture> StartAsync(
+    public static Task<ScreenCapture> StartAsync(
         CaptureTarget target,
         bool removeBorder = true,
         bool captureCursor = false)
@@ -91,8 +91,19 @@ public sealed class ScreenCapture : IDisposable
                 "この環境では Windows.Graphics.Capture が利用できません。Windows 11 であることを確認してください。");
         }
 
+        // セッションの構築は必ず MTA スレッドで行う。
+        // 呼び出し元が WPF の UI スレッド（STA）でも、ここで MTA へ移す。
+        // 理由は D3D11CaptureDevice の注記を参照（アパートメントをまたぐと読み出しが失敗する）。
+        return Task.Run(() => StartCoreAsync(target, removeBorder, captureCursor));
+    }
+
+    private static async Task<ScreenCapture> StartCoreAsync(
+        CaptureTarget target,
+        bool removeBorder,
+        bool captureCursor)
+    {
         var item = CreateItem(target);
-        var device = D3D11CaptureDevice.Create();
+        var device = await D3D11CaptureDevice.CreateAsync().ConfigureAwait(false);
 
         try
         {

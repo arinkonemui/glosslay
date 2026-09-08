@@ -5,7 +5,102 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Glosslay"
         mc:Ignorable="d"
-        Title="Glosslay" Height="450" Width="800">
-    <Grid>
+        Title="Glosslay — キャプチャ検証 (v0.1 PoC)"
+        Height="760" Width="1180" MinHeight="520" MinWidth="900">
+
+    <!--
+        v0.1 PoC の実験台。UI の作り込みは PoC の対象外（PLAN.md）。
+        目的は P0-2 の「排他フルスクリーンのゲームで取得できるか実測する」と、
+        P0-7 の精度計測用サンプル採取。
+    -->
+
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Padding" Value="10,5" />
+            <Setter Property="Margin" Value="0,0,6,0" />
+        </Style>
+        <Style TargetType="GroupBox">
+            <Setter Property="Padding" Value="8" />
+            <Setter Property="Margin" Value="0,0,0,10" />
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="12">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="340" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- ===== 左: 対象選択 ===== -->
+        <DockPanel Grid.Row="0" Grid.Column="0" Margin="0,0,12,0">
+
+            <GroupBox DockPanel.Dock="Top" Header="キャプチャ方式 (FR-CAP-02)">
+                <StackPanel>
+                    <RadioButton x:Name="WindowModeRadio" Content="ウィンドウ指定" IsChecked="True"
+                                 Margin="0,2" Checked="OnModeChanged" />
+                    <RadioButton x:Name="MonitorModeRadio" Content="モニタ全体" Margin="0,2"
+                                 Checked="OnModeChanged" />
+                    <TextBlock TextWrapping="Wrap" Foreground="#666" Margin="0,6,0,0" FontSize="11"
+                               Text="片方が塞がれた場合の保険として両方を用意する。排他フルスクリーンで挙動が変わる。" />
+                </StackPanel>
+            </GroupBox>
+
+            <GroupBox DockPanel.Dock="Top" Header="オプション">
+                <StackPanel>
+                    <CheckBox x:Name="RemoveBorderCheck" IsChecked="True" Margin="0,2"
+                              Content="キャプチャ枠を消す (FR-CAP-07)" Checked="OnOptionChanged"
+                              Unchecked="OnOptionChanged" />
+                    <CheckBox x:Name="CaptureCursorCheck" IsChecked="False" Margin="0,2"
+                              Content="カーソルを含める" Checked="OnOptionChanged"
+                              Unchecked="OnOptionChanged" />
+                </StackPanel>
+            </GroupBox>
+
+            <Button DockPanel.Dock="Bottom" Content="対象一覧を更新" Click="OnRefreshClick"
+                    Margin="0,8,0,0" />
+
+            <GroupBox Header="対象">
+                <ListBox x:Name="TargetList" DisplayMemberPath="DisplayName"
+                         SelectionChanged="OnTargetSelectionChanged" />
+            </GroupBox>
+        </DockPanel>
+
+        <!-- ===== 右: プレビュー ===== -->
+        <GroupBox Grid.Row="0" Grid.Column="1" Header="プレビュー">
+            <Grid>
+                <Border Background="#1E1E1E">
+                    <Image x:Name="PreviewImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" />
+                </Border>
+                <TextBlock x:Name="PreviewPlaceholder" Foreground="#888" FontSize="13"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                           Text="対象を選んで「今すぐキャプチャ」を押してください" />
+            </Grid>
+        </GroupBox>
+
+        <!-- ===== 下: 操作と結果 ===== -->
+        <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,12,0,0">
+
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                <Button x:Name="CaptureNowButton" Content="今すぐキャプチャ" Click="OnCaptureNowClick"
+                        FontWeight="SemiBold" />
+                <Button x:Name="CaptureDelayedButton" Content="5秒後にキャプチャ" Click="OnCaptureDelayedClick" />
+                <Button x:Name="SaveButton" Content="PNG で保存" Click="OnSaveClick" IsEnabled="False" />
+                <Button Content="保存フォルダを開く" Click="OnOpenFolderClick" />
+                <TextBlock VerticalAlignment="Center" Foreground="#666" FontSize="11" Margin="8,0,0,0"
+                           TextWrapping="Wrap"
+                           Text="排他フルスクリーンの検証は「5秒後」を押してからゲームへ切り替える。" />
+            </StackPanel>
+
+            <Border Background="#F5F5F5" BorderBrush="#DDD" BorderThickness="1" Padding="10" CornerRadius="3">
+                <TextBlock x:Name="ResultText" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"
+                           Text="—" />
+            </Border>
+
+            <TextBlock x:Name="StatusText" Margin="2,8,0,0" FontSize="12" Text="準備完了" />
+        </StackPanel>
     </Grid>
 </Window>

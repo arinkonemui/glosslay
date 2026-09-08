@@ -4,12 +4,17 @@
   <!--
     Glosslay アプリケーションマニフェスト
 
-    - 昇格を要求しない（RULES.md 🟠「管理者権限を要求しない」）
+    - 昇格を要求しない（RULES.md「管理者権限を要求しない」）
     - Per-Monitor DPI Aware V2（FR-CAP-09 マルチモニタ / 高DPI で座標がずれない）
-    - Windows 11 のみ対象（RULES.md 🟠 レガシー互換は書かない）
+    - Windows 11 のみ対象（RULES.md「レガシー互換コードを書かない」）
+
+    注意: このファイルに BMP 外の文字（絵文字など）を書いてはいけない。
+    Windows の SxS マニフェストパーサが解釈できず、
+    「サイド バイ サイド構成が正しくない」で起動不能になる。
+    RULES.md の見出しにある色付き記号をここへ転記しないこと。日本語そのものは問題ない。
   -->
 
-  <assemblyIdentity version="1.0.0.0" name="Glosslay.app" />
+  <assemblyIdentity version="1.0.0.0" name="Glosslay.app" type="win32" />
 
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
     <security>
@@ -22,7 +27,7 @@
 
   <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
     <application>
-      <!-- Windows 10 / 11 (GUID は Win10 系共通。Windows 11 もこれで判定される) -->
+      <!-- Windows 10 / 11 共通の GUID。Windows 11 もこれで判定される。 -->
       <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
     </application>
   </compatibility>
