@@ -1,0 +1,63 @@
+# ============================================
+# Glosslay .gitignore
+# ============================================
+
+# --- 要件定義書は絶対にコミットしない（RULES.md 🔴-4）---
+# 一度コミットすると git 履歴に残り、後から削除しても辿れてしまう。
+# 将来 OSS化（リポジトリの Public 化）する可能性があるため、念のため除外する。
+01.要件定義/
+*-spec.md
+仕様要望.txt
+
+# --- Claude Code ---
+# .local.json は個人設定のため除外（Claude Code 側でも自動除外されるが明示しておく）。
+# 現在は settings.local.json のみを使用しているため、.claude/ 配下は git 管理外。
+# ポリシー（git push / gh repo edit の禁止）を版管理したくなった場合は、
+# deny だけを .claude/settings.json に切り出してコミットすること。
+.claude/settings.local.json
+.claude/*.local.json
+
+# --- .NET ---
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+*.user
+*.userosscache
+*.suo
+*.userprefs
+.vs/
+*.dbmdl
+
+# --- ビルド成果物 / 配布物 ---
+publish/
+artifacts/
+*.msi
+*.exe
+*.zip
+
+# --- モデルファイル（サイズが大きいためリポジトリに入れない）---
+models/
+*.onnx
+
+# --- APIキー・シークレット ---
+appsettings.*.local.json
+secrets.json
+*.key
+*.pfx
+*.snk
+.env
+.env.*
+
+# --- ログ・一時ファイル ---
+*.log
+logs/
+*.tmp
+TestResults/
+
+# --- OS ---
+Thumbs.db
+desktop.ini
+.DS_Store

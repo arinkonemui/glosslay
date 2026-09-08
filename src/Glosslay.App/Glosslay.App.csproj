@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Glosslay.App — WPF デスクトップアプリ本体（配布される exe）
+
+    TargetFramework / Nullable / ImplicitUsings / 警告設定などは
+    ルートの Directory.Build.props で一元管理している。ここで上書きしないこと。
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <UseWPF>true</UseWPF>
+
+    <!-- 名前空間・アセンブリ名は Glosslay（AGENTS.md 命名規約）。
+         出力は Glosslay.exe になる。 -->
+    <RootNamespace>Glosslay</RootNamespace>
+    <AssemblyName>Glosslay</AssemblyName>
+
+    <!-- 管理者権限を要求しない / 高DPIで座標がずれない（RULES.md 🟠 / FR-CAP-09） -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Glosslay.Core\Glosslay.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,15 @@
+# 改行コードの正規化（Windows 専用プロジェクトのため CRLF を基本とする）
+* text=auto eol=crlf
+
+# バイナリ扱い（差分を取らない）
+*.png binary
+*.jpg binary
+*.ico binary
+*.onnx binary
+*.zip binary
+*.exe binary
+*.dll binary
+*.pdf binary
+
+# 言語判定から除外（GitHub の言語統計を汚さない）
+*.md linguist-documentation

@@ -1,0 +1,44 @@
+<Project>
+
+  <!--
+    Glosslay 共通ビルド設定
+
+    全プロジェクトに自動適用される。個別の .csproj で上書きしないこと。
+    特に TargetFramework は RULES.md の制約（.NET 10 LTS / Windows 11 のみ）に対応している。
+  -->
+
+  <PropertyGroup>
+    <!-- .NET 10 (LTS) / Windows 専用。
+         .NET 8 / 9 は 2026-11-10 サポート終了のため使用禁止（RULES.md） -->
+    <TargetFramework>net10.0-windows10.0.22000.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.22000.0</SupportedOSPlatformVersion>
+
+    <!-- Windows 11 (x64) のみ対象。レガシー互換コードは書かない。
+         RuntimeIdentifier はここでは指定しない（テストプロジェクト等で
+         RID固有の復元が走り、ビルドが不安定になるため）。
+         配布時に発行するアプリのプロジェクト側、または publish のオプションで指定すること。 -->
+    <Platforms>x64</Platforms>
+
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>false</InvariantGlobalization>
+
+    <!-- 警告をエラーとして扱い、品質を保つ -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+
+    <!-- WinRT API（Windows.Graphics.Capture / Windows.Gaming.Input / Windows.Media.Ocr）を使用するため必須 -->
+    <UseWindowsForms>false</UseWindowsForms>
+
+    <!-- 難読化・パッカーは使用しない（RULES.md 🔴-2 / AV誤検知の回避） -->
+    <Deterministic>true</Deterministic>
+
+    <Product>Glosslay</Product>
+    <Company>ArinkoLab</Company>
+    <Authors>ArinkoLab</Authors>
+    <NeutralLanguage>ja-JP</NeutralLanguage>
+  </PropertyGroup>
+
+</Project>

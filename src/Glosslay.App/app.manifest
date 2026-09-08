@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+
+  <!--
+    Glosslay アプリケーションマニフェスト
+
+    - 昇格を要求しない（RULES.md 🟠「管理者権限を要求しない」）
+    - Per-Monitor DPI Aware V2（FR-CAP-09 マルチモニタ / 高DPI で座標がずれない）
+    - Windows 11 のみ対象（RULES.md 🟠 レガシー互換は書かない）
+  -->
+
+  <assemblyIdentity version="1.0.0.0" name="Glosslay.app" />
+
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <!-- 昇格しない。ゲームと同じ権限で動作する。 -->
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10 / 11 (GUID は Win10 系共通。Windows 11 もこれで判定される) -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
+    </application>
+  </compatibility>
+
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <!-- キャプチャ座標とオーバーレイ座標をモニタ間で一致させるために必須 -->
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+    </windowsSettings>
+  </application>
+
+</assembly>

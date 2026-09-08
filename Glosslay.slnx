@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Glosslay.App/Glosslay.App.csproj" />
+    <Project Path="src/Glosslay.Core/Glosslay.Core.csproj" />
+  </Folder>
+</Solution>

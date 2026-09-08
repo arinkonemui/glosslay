@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Glosslay.Core — UI に依存しない中核ロジック
+      Capture / Preprocess / IOcrEngine / ITranslator / Overlay の Win32 相互運用など
+
+    TargetFramework 等は Directory.Build.props で一元管理している。上書きしないこと。
+    WinRT（Windows.Graphics.Capture / Windows.Media.Ocr / Windows.Gaming.Input）を
+    使うため、TargetFramework は Windows 版のまま据え置く。
+  -->
+
+  <PropertyGroup>
+    <!-- 名前空間は Glosslay 起点（AGENTS.md 命名規約）。
+         例: Capture/ 配下は Glosslay.Capture になる。 -->
+    <RootNamespace>Glosslay</RootNamespace>
+  </PropertyGroup>
+
+</Project>
