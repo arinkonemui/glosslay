@@ -88,6 +88,8 @@
                 <Button x:Name="CaptureNowButton" Content="今すぐキャプチャ" Click="OnCaptureNowClick"
                         FontWeight="SemiBold" />
                 <Button x:Name="CaptureDelayedButton" Content="5秒後にキャプチャ" Click="OnCaptureDelayedClick" />
+                <Button x:Name="OcrButton" Content="OCR を実行" Click="OnOcrClick" IsEnabled="False"
+                        FontWeight="SemiBold" />
                 <Button x:Name="SaveButton" Content="PNG で保存" Click="OnSaveClick" IsEnabled="False" />
                 <Button Content="保存フォルダを開く" Click="OnOpenFolderClick" />
                 <TextBlock VerticalAlignment="Center" Foreground="#666" FontSize="11" Margin="8,0,0,0"

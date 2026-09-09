@@ -18,4 +18,8 @@ public sealed record CapturedFrame(
     int Height,
     int Stride,
     byte[] Pixels,
-    TimeSpan SystemRelativeTime);
+    TimeSpan SystemRelativeTime)
+{
+    /// <summary>前処理・OCR へ渡すための画像として見る。ピクセル列は複製しない。</summary>
+    public Imaging.Bgra32Image AsImage() => new(Pixels, Width, Height, Stride);
+}

@@ -28,6 +28,12 @@
       配布サイズ・AV 誤検知への影響はゼロ（RULES.md 🔵「依存関係を増やすときは相談する」に基づき
       2026-09-08 に人間の承認を得て追加）。
     -->
+    <!--
+      ONNX Runtime — PaddleOCR（PP-OCRv6）とローカルNMTで共有する推論基盤。
+      AGENTS.md の技術スタックで確定済み。GPU 版ではなく CPU 版を使う
+      （RULES.md「GPU推論は既定で無効」。ゲームと VRAM を奪い合わない）。
+    -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.29.0" />
     <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.333">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>

@@ -24,4 +24,18 @@
     <ProjectReference Include="..\Glosslay.Core\Glosslay.Core.csproj" />
   </ItemGroup>
 
+  <!--
+    開発時の利便のため、tools/ocr-eval/models に取得した OCR モデルを出力先へ複製する。
+    モデルは .gitignore で除外しているため、無い環境ではこのブロックごと無効になる
+    （その場合 PaddleOcrEngine が「モデルが見つかりません」と具体的に知らせる）。
+    配布時はインストーラで models/ を同梱する。
+  -->
+  <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)..\..\tools\ocr-eval\models')">
+    <None Include="..\..\tools\ocr-eval\models\**\*.onnx;..\..\tools\ocr-eval\models\*.txt">
+      <Link>models\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
+    </None>
+  </ItemGroup>
+
 </Project>
