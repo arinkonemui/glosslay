@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Glosslay.Capture;
@@ -33,6 +34,8 @@ public partial class MainWindow : Window, IDisposable
 
     private CapturedFrame? _lastFrame;
     private BitmapSource? _lastBitmap;
+    private CaptureTarget? _lastTarget;
+    private OverlayWindow? _overlay;
 
     public MainWindow()
     {
@@ -81,6 +84,7 @@ public partial class MainWindow : Window, IDisposable
     public void Dispose()
     {
         ReleaseCapture();
+        _overlay?.Close();
         _ocrEngine.Dispose();
         GC.SuppressFinalize(this);
     }
@@ -206,15 +210,7 @@ public partial class MainWindow : Window, IDisposable
     private void ShowFrame(
         CaptureTarget target, ScreenCapture capture, CapturedFrame frame, double startMs, double frameMs)
     {
-        _lastFrame = frame;
-        _lastBitmap = BitmapSource.Create(
-            frame.Width, frame.Height, 96, 96, PixelFormats.Bgra32, null, frame.Pixels, frame.Stride);
-        _lastBitmap.Freeze();
-
-        PreviewImage.Source = _lastBitmap;
-        PreviewPlaceholder.Visibility = Visibility.Collapsed;
-        SaveButton.IsEnabled = true;
-        OcrButton.IsEnabled = true;
+        UpdatePreview(target, frame);
 
         var nonBlackRatio = CalculateNonBlackRatio(frame);
         var blackWarning = nonBlackRatio < 0.001
@@ -230,6 +226,22 @@ public partial class MainWindow : Window, IDisposable
             $"非黒ピクセル   : {nonBlackRatio * 100:F1} %{blackWarning}");
 
         StatusText.Text = "キャプチャしました。";
+    }
+
+    /// <summary>プレビューを最新のフレームに差し替える。結果欄は書き換えない。</summary>
+    private void UpdatePreview(CaptureTarget target, CapturedFrame frame)
+    {
+        _lastFrame = frame;
+        _lastTarget = target;
+        _lastBitmap = BitmapSource.Create(
+            frame.Width, frame.Height, 96, 96, PixelFormats.Bgra32, null, frame.Pixels, frame.Stride);
+        _lastBitmap.Freeze();
+
+        PreviewImage.Source = _lastBitmap;
+        PreviewPlaceholder.Visibility = Visibility.Collapsed;
+        SaveButton.IsEnabled = true;
+        OcrButton.IsEnabled = true;
+        OverlayButton.IsEnabled = true;
     }
 
     /// <summary>取得できたのが黒画面でないかの判定材料（FR-CAP-03）。</summary>
@@ -317,6 +329,88 @@ public partial class MainWindow : Window, IDisposable
         target.Render(visual);
         target.Freeze();
         return target;
+    }
+
+    // ===== オーバーレイ（P0-6） =====
+
+    private async void OnOverlayClick(object sender, RoutedEventArgs e)
+        => await RunGuardedAsync(ShowOverlayAsync).ConfigureAwait(true);
+
+    private async Task ShowOverlayAsync()
+    {
+        if (TargetList.SelectedItem is not CaptureTarget target)
+        {
+            StatusText.Text = "対象が選択されていません。";
+            return;
+        }
+
+        if (!CaptureTargetBounds.TryGet(target, out var bounds))
+        {
+            StatusText.Text = "対象の画面上の位置を取得できませんでした。";
+            return;
+        }
+
+        OverlayButton.IsEnabled = false;
+        try
+        {
+            // 押した時点の画面を撮り直す。前のキャプチャを使い回すと、
+            // ゲーム内で画面を切り替えたときに古い内容を表示してしまう（FR-MOD-01）。
+            StatusText.Text = "キャプチャ中…";
+            var capture = await EnsureCaptureAsync(target).ConfigureAwait(true);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var frame = await capture.GetNextFrameAsync(timeout.Token).ConfigureAwait(true);
+            UpdatePreview(target, frame);
+
+            StatusText.Text = "OCR 実行中…";
+            var result = await _ocrEngine.RecognizeAsync(frame.AsImage()).ConfigureAwait(true);
+
+            _overlay ??= new OverlayWindow { Owner = this };
+
+            // ウィンドウ指定なら、ゲームか操作ウィンドウが前面の間だけ表示する。
+            // モニタ全体はどれがゲームか特定できないため追従しない（自動フェードのみ）。
+            IReadOnlyList<nint>? keepVisibleFor = target.Kind == CaptureTargetKind.Window
+                ? [target.Handle, new WindowInteropHelper(this).Handle]
+                : null;
+
+            _overlay.ShowLines(
+                result.Lines, bounds, frame.Width, frame.Height, keepVisibleFor);
+            OverlayHideButton.IsEnabled = true;
+
+            // P0-6 の検証項目。設定したつもりで終わらせず、実際の値を出す。
+            var style = _overlay.StyleState;
+            ResultText.Text = string.Join(Environment.NewLine,
+                $"重ねた先       : {bounds.X},{bounds.Y} {bounds.Width}x{bounds.Height}（物理px）",
+                $"認識画像       : {frame.Width}x{frame.Height}（このボタンで撮り直したもの）",
+                $"表示した行     : {result.Lines.Count}",
+                $"自動で消える   : {_overlay.AutoHideAfter.TotalSeconds:F0} 秒後（FR-OVL-06）",
+                $"前面の追従     : {(keepVisibleFor is null ? "なし（モニタ全体のため）" : "ゲームと操作画面のみ表示")}",
+                string.Empty,
+                "拡張スタイルの実測値（RULES.md が必須と定める4つ）",
+                $"  WS_EX_LAYERED     (透過)          : {Mark(style.IsLayered)}",
+                $"  WS_EX_TRANSPARENT (クリックスルー): {Mark(style.IsClickThrough)}",
+                $"  WS_EX_NOACTIVATE  (フォーカス維持): {Mark(style.DoesNotActivate)}",
+                $"  WS_EX_TOOLWINDOW  (Alt+Tab非表示) : {Mark(style.IsHiddenFromAltTab)}",
+                string.Empty,
+                style.IsComplete
+                    ? "4つとも設定済み。実際に効くかはゲーム上で操作して確認すること。"
+                    : "★ 不足があります。要件を満たしていません。");
+
+            StatusText.Text = $"オーバーレイ表示中: {result.Lines.Count} 行 / "
+                + $"{result.Elapsed.TotalMilliseconds:F0} ms";
+        }
+        finally
+        {
+            OverlayButton.IsEnabled = true;
+        }
+
+        static string Mark(bool value) => value ? "OK" : "未設定";
+    }
+
+    private void OnOverlayHideClick(object sender, RoutedEventArgs e)
+    {
+        _overlay?.HideOverlay();
+        OverlayHideButton.IsEnabled = false;
+        StatusText.Text = "オーバーレイを消しました。";
     }
 
     // ===== 保存 =====

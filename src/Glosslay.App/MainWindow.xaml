@@ -90,6 +90,10 @@
                 <Button x:Name="CaptureDelayedButton" Content="5秒後にキャプチャ" Click="OnCaptureDelayedClick" />
                 <Button x:Name="OcrButton" Content="OCR を実行" Click="OnOcrClick" IsEnabled="False"
                         FontWeight="SemiBold" />
+                <Button x:Name="OverlayButton" Content="オーバーレイ表示" Click="OnOverlayClick"
+                        IsEnabled="False" FontWeight="SemiBold" />
+                <Button x:Name="OverlayHideButton" Content="オーバーレイ消去" Click="OnOverlayHideClick"
+                        IsEnabled="False" />
                 <Button x:Name="SaveButton" Content="PNG で保存" Click="OnSaveClick" IsEnabled="False" />
                 <Button Content="保存フォルダを開く" Click="OnOpenFolderClick" />
                 <TextBlock VerticalAlignment="Center" Foreground="#666" FontSize="11" Margin="8,0,0,0"
@@ -97,9 +101,14 @@
                            Text="排他フルスクリーンの検証は「5秒後」を押してからゲームへ切り替える。" />
             </StackPanel>
 
-            <Border Background="#F5F5F5" BorderBrush="#DDD" BorderThickness="1" Padding="10" CornerRadius="3">
-                <TextBlock x:Name="ResultText" FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"
-                           Text="—" />
+            <!-- 結果は行数が読めないため必ず高さを固定してスクロールさせる。
+                 Auto のままだと OCR の行数が多いときに他の要素を画面外へ押し出す。 -->
+            <Border Background="#F5F5F5" BorderBrush="#DDD" BorderThickness="1" Padding="10"
+                    CornerRadius="3" Height="150">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+                    <TextBlock x:Name="ResultText" FontFamily="Consolas" FontSize="12"
+                               TextWrapping="NoWrap" Text="—" />
+                </ScrollViewer>
             </Border>
 
             <TextBlock x:Name="StatusText" Margin="2,8,0,0" FontSize="12" Text="準備完了" />

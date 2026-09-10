@@ -27,6 +27,17 @@ IDirect3DDxgiInterfaceAccess
 // Windows 11 では GraphicsCaptureItem.TryCreateFromWindowId / TryCreateFromDisplayId が
 // 射影されており、COM 相互運用なしで対象を作成できる（2026-09-08 に実機で確認済み）。
 
+// --- オーバーレイウィンドウの拡張スタイル（FR-OVL-02 / 03 / 09） ---
+// RULES.md が必須と定める LAYERED / TRANSPARENT / NOACTIVATE / TOOLWINDOW を設定する。
+GetWindowLongPtrW
+SetWindowLongPtrW
+WINDOW_EX_STYLE
+WINDOW_LONG_PTR_INDEX
+
+// 対象がフォアグラウンドかの確認。ゲーム以外へ切り替えたらオーバーレイを引っ込めるために使う。
+// 前面ウィンドウのハンドルを問い合わせるだけで、ゲームプロセスには一切触れない。
+GetForegroundWindow
+
 // --- キャプチャ対象の列挙（ウィンドウ指定 / モニタ全体の切替: FR-CAP-02） ---
 EnumWindows
 IsWindowVisible

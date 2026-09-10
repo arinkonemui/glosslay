@@ -19,6 +19,12 @@
          配布時に発行するアプリのプロジェクト側、または publish のオプションで指定すること。 -->
     <Platforms>x64</Platforms>
 
+    <!-- Platforms だけではコンパイル対象は AnyCPU のままになる。
+         ポインタ長に依存する Win32 API（SetWindowLongPtr 等）は CsWin32 が
+         アーキテクチャ確定を要求するため、x64 を明示する。
+         RuntimeIdentifier とは別物で、RID 固有の復元は走らない。 -->
+    <PlatformTarget>x64</PlatformTarget>
+
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
