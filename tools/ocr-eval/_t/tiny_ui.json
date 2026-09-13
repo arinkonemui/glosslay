@@ -1,0 +1,130 @@
+{
+  "image": "C:\\Users\\arink\\AppData\\Local\\Temp\\claude\\C--Users-arink-source-009---------\\c6c40e43-668c-4b4c-a9b5-63fa10c20aa5\\scratchpad\\hard_samples\\tiny_ui.png",
+  "width": 600,
+  "height": 240,
+  "ocr_version": "(既定)",
+  "det_model": null,
+  "rec_model": null,
+  "scale": 2.0,
+  "cpu_threads": 4,
+  "enable_mkldnn": false,
+  "elapsed_ms": 2906.2,
+  "line_count": 5,
+  "lines": [
+    {
+      "index": 0,
+      "text": "3/3",
+      "score": 1.0,
+      "box": [
+        [
+          28,
+          99
+        ],
+        [
+          84,
+          99
+        ],
+        [
+          84,
+          138
+        ],
+        [
+          28,
+          138
+        ]
+      ]
+    },
+    {
+      "index": 1,
+      "text": "5/5",
+      "score": 1.0,
+      "box": [
+        [
+          139,
+          99
+        ],
+        [
+          195,
+          99
+        ],
+        [
+          195,
+          139
+        ],
+        [
+          139,
+          139
+        ]
+      ]
+    },
+    {
+      "index": 2,
+      "text": "0/2",
+      "score": 1.0,
+      "box": [
+        [
+          252,
+          99
+        ],
+        [
+          309,
+          99
+        ],
+        [
+          309,
+          138
+        ],
+        [
+          252,
+          138
+        ]
+      ]
+    },
+    {
+      "index": 3,
+      "text": "110",
+      "score": 1.0,
+      "box": [
+        [
+          364,
+          100
+        ],
+        [
+          423,
+          100
+        ],
+        [
+          423,
+          137
+        ],
+        [
+          364,
+          137
+        ]
+      ]
+    },
+    {
+      "index": 4,
+      "text": "2,430",
+      "score": 1.0,
+      "box": [
+        [
+          475,
+          98
+        ],
+        [
+          557,
+          98
+        ],
+        [
+          557,
+          141
+        ],
+        [
+          475,
+          141
+        ]
+      ]
+    }
+  ]
+}

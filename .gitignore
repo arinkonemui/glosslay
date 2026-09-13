@@ -54,6 +54,12 @@ __pycache__/
 # 計測の出力（画像と JSON）。結果の要約は PLAN.md に残す。
 tools/ocr-eval/results/
 
+# 計測に使うゲーム画面のキャプチャ。ゲームの著作物なのでコミットしない。
+# 正解テキスト（*.truth.txt）は自分で書き起こしたものなのでコミットする。
+tools/ocr-eval/samples/*.png
+tools/ocr-eval/samples/*.jpg
+tools/ocr-eval/samples/*.bmp
+
 # --- APIキー・シークレット ---
 appsettings.*.local.json
 secrets.json

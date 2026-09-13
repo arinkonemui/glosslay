@@ -2,10 +2,12 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Glosslay.Capture;
+using Glosslay.Imaging;
 using Glosslay.Ocr;
 
 namespace Glosslay;
@@ -36,6 +38,12 @@ public partial class MainWindow : Window, IDisposable
     private BitmapSource? _lastBitmap;
     private CaptureTarget? _lastTarget;
     private OverlayWindow? _overlay;
+
+    /// <summary>OCR の対象範囲（元画像の画素座標）。null なら全体。</summary>
+    private Int32Rect? _region;
+
+    private Point _dragOrigin;
+    private bool _isDragging;
 
     public MainWindow()
     {
@@ -261,6 +269,188 @@ public partial class MainWindow : Window, IDisposable
         return total == 0 ? 0 : (double)nonBlack / total;
     }
 
+    // ===== 前処理と範囲指定（P0-3） =====
+
+    /// <summary>UI の設定から前処理のオプションを組み立てる。</summary>
+    private PreprocessOptions BuildPreprocessOptions() => new()
+    {
+        Scale = ComboValue(ScaleCombo, 1.0),
+        Contrast = ComboValue(ContrastCombo, 1.0),
+        AutoContrast = AutoContrastCheck.IsChecked == true,
+        RemoveBackground = RemoveBackgroundCheck.IsChecked == true,
+        Binarize = BinarizeCheck.IsChecked == true,
+        Invert = InvertCheck.IsChecked == true,
+    };
+
+    private static double ComboValue(System.Windows.Controls.ComboBox combo, double fallback) =>
+        combo.SelectedItem is System.Windows.Controls.ComboBoxItem { Tag: string tag }
+        && double.TryParse(tag, System.Globalization.CultureInfo.InvariantCulture, out var value)
+            ? value
+            : fallback;
+
+    /// <summary>
+    /// フレームを OCR にかけられる形にする。範囲指定があれば切り出し、前処理を適用する。
+    /// </summary>
+    /// <returns>加工後の画像と、元画像へ座標を戻すための情報。</returns>
+    private (Bgra32Image Image, PreprocessOptions Options, int OffsetX, int OffsetY)
+        PrepareForOcr(CapturedFrame frame)
+    {
+        var image = frame.AsImage();
+        var offsetX = 0;
+        var offsetY = 0;
+
+        if (_region is { } region)
+        {
+            // 範囲を絞ると検出コストが大きく下がる。全画面の 1/3 程度になる。
+            image = image.Crop(region.X, region.Y, region.Width, region.Height);
+            offsetX = region.X;
+            offsetY = region.Y;
+        }
+
+        var options = BuildPreprocessOptions();
+        return (ImagePreprocessor.Apply(image, options), options, offsetX, offsetY);
+    }
+
+    /// <summary>OCR の結果を、加工後の座標から元画像の座標へ戻す。</summary>
+    private static IReadOnlyList<OcrLine> MapToSource(
+        IReadOnlyList<OcrLine> lines, double scale, int offsetX, int offsetY)
+    {
+        if (scale is 1.0 && offsetX == 0 && offsetY == 0)
+        {
+            return lines;
+        }
+
+        return [.. lines.Select(line => line with
+        {
+            Box = new OcrBox(
+                (int)(line.Box.X / scale) + offsetX,
+                (int)(line.Box.Y / scale) + offsetY,
+                (int)(line.Box.Width / scale),
+                (int)(line.Box.Height / scale)),
+        })];
+    }
+
+    private void OnClearRegionClick(object sender, RoutedEventArgs e)
+    {
+        _region = null;
+        SelectionRectangle.Visibility = Visibility.Collapsed;
+        StatusText.Text = "範囲の指定を解除しました。画像全体を OCR します。";
+    }
+
+    private void OnSelectionStart(object sender, MouseButtonEventArgs e)
+    {
+        if (_lastBitmap is null)
+        {
+            return;
+        }
+
+        _isDragging = true;
+        _dragOrigin = e.GetPosition(SelectionCanvas);
+        SelectionCanvas.CaptureMouse();
+
+        SelectionRectangle.Visibility = Visibility.Visible;
+        UpdateSelectionRectangle(_dragOrigin, _dragOrigin);
+    }
+
+    private void OnSelectionMove(object sender, MouseEventArgs e)
+    {
+        if (_isDragging)
+        {
+            UpdateSelectionRectangle(_dragOrigin, e.GetPosition(SelectionCanvas));
+        }
+    }
+
+    private void OnSelectionEnd(object sender, MouseButtonEventArgs e)
+    {
+        if (!_isDragging)
+        {
+            return;
+        }
+
+        _isDragging = false;
+        SelectionCanvas.ReleaseMouseCapture();
+
+        var end = e.GetPosition(SelectionCanvas);
+        UpdateSelectionRectangle(_dragOrigin, end);
+
+        _region = ToSourceRegion(_dragOrigin, end);
+        if (_region is { } region)
+        {
+            StatusText.Text = $"範囲を指定しました: {region.X},{region.Y} "
+                + $"{region.Width}x{region.Height}（元画像の画素）";
+        }
+        else
+        {
+            SelectionRectangle.Visibility = Visibility.Collapsed;
+            StatusText.Text = "範囲が小さすぎます。指定を解除しました。";
+        }
+    }
+
+    private void UpdateSelectionRectangle(Point a, Point b)
+    {
+        var x = Math.Min(a.X, b.X);
+        var y = Math.Min(a.Y, b.Y);
+
+        System.Windows.Controls.Canvas.SetLeft(SelectionRectangle, x);
+        System.Windows.Controls.Canvas.SetTop(SelectionRectangle, y);
+        SelectionRectangle.Width = Math.Abs(a.X - b.X);
+        SelectionRectangle.Height = Math.Abs(a.Y - b.Y);
+    }
+
+    /// <summary>
+    /// プレビュー上の座標を元画像の画素座標へ変換する。
+    /// </summary>
+    /// <remarks>
+    /// プレビューは Stretch="Uniform" のため上下または左右に余白ができる。
+    /// その余白を除いてから比率を掛けないと、指定した位置とずれる。
+    /// </remarks>
+    private Int32Rect? ToSourceRegion(Point a, Point b)
+    {
+        if (_lastBitmap is null)
+        {
+            return null;
+        }
+
+        var controlWidth = SelectionCanvas.ActualWidth;
+        var controlHeight = SelectionCanvas.ActualHeight;
+        if (controlWidth <= 0 || controlHeight <= 0)
+        {
+            return null;
+        }
+
+        var imageAspect = (double)_lastBitmap.PixelWidth / _lastBitmap.PixelHeight;
+        var controlAspect = controlWidth / controlHeight;
+
+        double displayWidth, displayHeight;
+        if (imageAspect > controlAspect)
+        {
+            displayWidth = controlWidth;
+            displayHeight = controlWidth / imageAspect;
+        }
+        else
+        {
+            displayHeight = controlHeight;
+            displayWidth = controlHeight * imageAspect;
+        }
+
+        var marginX = (controlWidth - displayWidth) / 2;
+        var marginY = (controlHeight - displayHeight) / 2;
+
+        var left = ToSource(Math.Min(a.X, b.X), marginX, displayWidth, _lastBitmap.PixelWidth);
+        var top = ToSource(Math.Min(a.Y, b.Y), marginY, displayHeight, _lastBitmap.PixelHeight);
+        var right = ToSource(Math.Max(a.X, b.X), marginX, displayWidth, _lastBitmap.PixelWidth);
+        var bottom = ToSource(Math.Max(a.Y, b.Y), marginY, displayHeight, _lastBitmap.PixelHeight);
+
+        var width = right - left;
+        var height = bottom - top;
+
+        // 極端に小さい範囲は誤操作とみなす。
+        return width >= 16 && height >= 16 ? new Int32Rect(left, top, width, height) : null;
+
+        static int ToSource(double value, double margin, double display, int sourceSize) =>
+            Math.Clamp((int)Math.Round((value - margin) / display * sourceSize), 0, sourceSize);
+    }
+
     // ===== OCR =====
 
     private async void OnOcrClick(object sender, RoutedEventArgs e)
@@ -278,11 +468,20 @@ public partial class MainWindow : Window, IDisposable
         StatusText.Text = "OCR 実行中…";
         try
         {
-            var result = await _ocrEngine.RecognizeAsync(_lastFrame.AsImage()).ConfigureAwait(true);
+            var (image, options, offsetX, offsetY) = PrepareForOcr(_lastFrame);
+            var result = await _ocrEngine.RecognizeAsync(image).ConfigureAwait(true);
+            var lines = MapToSource(result.Lines, options.Scale, offsetX, offsetY);
 
-            PreviewImage.Source = DrawBoxes(_lastBitmap, result.Lines);
-            ResultText.Text = FormatOcrResult(result);
-            StatusText.Text = $"OCR 完了: {result.Lines.Count} 行 / "
+            PreviewImage.Source = DrawBoxes(_lastBitmap, lines);
+            ResultText.Text = string.Join(Environment.NewLine,
+                $"前処理     : {options}",
+                $"OCR 入力   : {image.Width}x{image.Height}"
+                    + (_region is { } r ? $"（範囲 {r.X},{r.Y} {r.Width}x{r.Height} を切り出し）" : "（全体）"),
+                $"処理時間   : {result.Elapsed.TotalMilliseconds:F0} ms",
+                string.Empty,
+                FormatOcrResult(lines));
+
+            StatusText.Text = $"OCR 完了: {lines.Count} 行 / "
                 + $"{result.Elapsed.TotalMilliseconds:F0} ms（{_ocrEngine.Name}）";
         }
         finally
@@ -291,20 +490,52 @@ public partial class MainWindow : Window, IDisposable
         }
     }
 
-    private static string FormatOcrResult(OcrResult result)
+    private static string FormatOcrResult(IReadOnlyList<OcrLine> lines)
     {
-        if (result.Lines.Count == 0)
+        if (lines.Count == 0)
         {
             return "文字が検出されませんでした。"
-                + "領域を絞る、または前処理（拡大・コントラスト）を検討してください。";
+                + "範囲を絞る、または前処理（拡大・コントラスト）を試してください。";
         }
 
-        var lines = result.Lines
-            .OrderBy(line => line.Box.Y)
-            .ThenBy(line => line.Box.X)
-            .Select(line => $"{line.Confidence:F3}  [{line.Box.X,5},{line.Box.Y,5}]  {line.Text}");
+        return string.Join(Environment.NewLine, InReadingOrder(lines)
+            .Select(line => $"{line.Confidence:F3}  [{line.Box.X,5},{line.Box.Y,5}]  {line.Text}"));
+    }
 
-        return string.Join(Environment.NewLine, lines);
+    /// <summary>
+    /// 認識結果を読み順に並べ直す。
+    /// </summary>
+    /// <remarks>
+    /// 縦位置が近いものを同じ行にまとめ、行内は左から右へ並べる。
+    /// Y 座標だけで並べると、同じ行の要素が 1px のずれで入れ替わる。
+    /// SPEC.md §2 の TextAggregator が本来担う処理の最小版。
+    /// </remarks>
+    private static List<OcrLine> InReadingOrder(IReadOnlyList<OcrLine> lines)
+    {
+        var rows = new List<List<OcrLine>>();
+
+        foreach (var line in lines.OrderBy(l => l.Box.Y))
+        {
+            var center = line.Box.Y + (line.Box.Height / 2.0);
+            var row = rows.FirstOrDefault(candidate =>
+            {
+                var head = candidate[0];
+                var headCenter = head.Box.Y + (head.Box.Height / 2.0);
+                var tolerance = Math.Max(head.Box.Height, line.Box.Height) * 0.5;
+                return Math.Abs(headCenter - center) < tolerance;
+            });
+
+            if (row is null)
+            {
+                rows.Add([line]);
+            }
+            else
+            {
+                row.Add(line);
+            }
+        }
+
+        return [.. rows.SelectMany(row => row.OrderBy(l => l.Box.X))];
     }
 
     /// <summary>認識できた位置を確認できるよう、プレビューに枠を重ねる。</summary>
@@ -362,7 +593,9 @@ public partial class MainWindow : Window, IDisposable
             UpdatePreview(target, frame);
 
             StatusText.Text = "OCR 実行中…";
-            var result = await _ocrEngine.RecognizeAsync(frame.AsImage()).ConfigureAwait(true);
+            var (image, options, offsetX, offsetY) = PrepareForOcr(frame);
+            var result = await _ocrEngine.RecognizeAsync(image).ConfigureAwait(true);
+            var lines = MapToSource(result.Lines, options.Scale, offsetX, offsetY);
 
             _overlay ??= new OverlayWindow { Owner = this };
 
@@ -373,7 +606,7 @@ public partial class MainWindow : Window, IDisposable
                 : null;
 
             _overlay.ShowLines(
-                result.Lines, bounds, frame.Width, frame.Height, keepVisibleFor);
+                lines, bounds, frame.Width, frame.Height, keepVisibleFor);
             OverlayHideButton.IsEnabled = true;
 
             // P0-6 の検証項目。設定したつもりで終わらせず、実際の値を出す。
@@ -381,7 +614,8 @@ public partial class MainWindow : Window, IDisposable
             ResultText.Text = string.Join(Environment.NewLine,
                 $"重ねた先       : {bounds.X},{bounds.Y} {bounds.Width}x{bounds.Height}（物理px）",
                 $"認識画像       : {frame.Width}x{frame.Height}（このボタンで撮り直したもの）",
-                $"表示した行     : {result.Lines.Count}",
+                $"表示した行     : {lines.Count}",
+                $"前処理         : {options}",
                 $"自動で消える   : {_overlay.AutoHideAfter.TotalSeconds:F0} 秒後（FR-OVL-06）",
                 $"前面の追従     : {(keepVisibleFor is null ? "なし（モニタ全体のため）" : "ゲームと操作画面のみ表示")}",
                 string.Empty,
@@ -395,7 +629,7 @@ public partial class MainWindow : Window, IDisposable
                     ? "4つとも設定済み。実際に効くかはゲーム上で操作して確認すること。"
                     : "★ 不足があります。要件を満たしていません。");
 
-            StatusText.Text = $"オーバーレイ表示中: {result.Lines.Count} 行 / "
+            StatusText.Text = $"オーバーレイ表示中: {lines.Count} 行 / "
                 + $"{result.Elapsed.TotalMilliseconds:F0} ms";
         }
         finally

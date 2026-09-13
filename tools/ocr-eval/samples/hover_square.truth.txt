@@ -1,0 +1,9 @@
+Charged Web
+110+
+If your opponent's Active Pokémon is a Pokémon ex or
+Pokémon V, this attack does 110 more damage.
+Fulgurite
+180
+Discard all Energy from this Pokémon. During your
+opponent's next turn, they can't play any Item cards from
+their hand.

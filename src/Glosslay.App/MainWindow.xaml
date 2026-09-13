@@ -6,7 +6,7 @@
         xmlns:local="clr-namespace:Glosslay"
         mc:Ignorable="d"
         Title="Glosslay — キャプチャ検証 (v0.1 PoC)"
-        Height="760" Width="1180" MinHeight="520" MinWidth="900">
+        Height="820" Width="1180" MinHeight="600" MinWidth="900">
 
     <!--
         v0.1 PoC の実験台。UI の作り込みは PoC の対象外（PLAN.md）。
@@ -35,10 +35,14 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- ===== 左: 対象選択 ===== -->
-        <DockPanel Grid.Row="0" Grid.Column="0" Margin="0,0,12,0">
+        <!-- ===== 左: 対象選択 =====
+             項目が増えても全部に手が届くよう、必ずスクロールできる形にしておく。
+             DockPanel で Top 固定を積むと、残り領域を使う要素の高さが 0 になって消える。 -->
+        <ScrollViewer Grid.Row="0" Grid.Column="0" Margin="0,0,12,0"
+                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel>
 
-            <GroupBox DockPanel.Dock="Top" Header="キャプチャ方式 (FR-CAP-02)">
+            <GroupBox Header="キャプチャ方式 (FR-CAP-02)">
                 <StackPanel>
                     <RadioButton x:Name="WindowModeRadio" Content="ウィンドウ指定" IsChecked="True"
                                  Margin="0,2" Checked="OnModeChanged" />
@@ -49,7 +53,7 @@
                 </StackPanel>
             </GroupBox>
 
-            <GroupBox DockPanel.Dock="Top" Header="オプション">
+            <GroupBox Header="オプション">
                 <StackPanel>
                     <CheckBox x:Name="RemoveBorderCheck" IsChecked="True" Margin="0,2"
                               Content="キャプチャ枠を消す (FR-CAP-07)" Checked="OnOptionChanged"
@@ -60,20 +64,65 @@
                 </StackPanel>
             </GroupBox>
 
-            <Button DockPanel.Dock="Bottom" Content="対象一覧を更新" Click="OnRefreshClick"
-                    Margin="0,8,0,0" />
+            <!-- P0-3。ジャンルごとに最適値が違うため、実ゲームで試せるようにしておく -->
+            <GroupBox Header="前処理 (FR-OCR-04/05)">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                        <TextBlock Text="拡大" VerticalAlignment="Center" Width="70" />
+                        <ComboBox x:Name="ScaleCombo" Width="70" SelectedIndex="0">
+                            <ComboBoxItem Content="1.0 倍" Tag="1.0" />
+                            <ComboBoxItem Content="1.5 倍" Tag="1.5" />
+                            <ComboBoxItem Content="2.0 倍" Tag="2.0" />
+                            <ComboBoxItem Content="3.0 倍" Tag="3.0" />
+                            <ComboBoxItem Content="4.0 倍" Tag="4.0" />
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,2">
+                        <TextBlock Text="コントラスト" VerticalAlignment="Center" Width="70" />
+                        <ComboBox x:Name="ContrastCombo" Width="70" SelectedIndex="0">
+                            <ComboBoxItem Content="1.0" Tag="1.0" />
+                            <ComboBoxItem Content="1.3" Tag="1.3" />
+                            <ComboBoxItem Content="1.6" Tag="1.6" />
+                            <ComboBoxItem Content="2.0" Tag="2.0" />
+                        </ComboBox>
+                    </StackPanel>
+                    <CheckBox x:Name="AutoContrastCheck" Content="自動コントラスト" Margin="0,4,0,2" />
+                    <CheckBox x:Name="RemoveBackgroundCheck" Content="背景除去（イラスト背景対策）" Margin="0,2" />
+                    <CheckBox x:Name="BinarizeCheck" Content="二値化" Margin="0,2" />
+                    <CheckBox x:Name="InvertCheck" Content="明暗を反転" Margin="0,2" />
+                    <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,6,0,0"
+                               Text="プレビュー上をドラッグすると、その範囲だけを OCR する。範囲を絞ると速くなる。" />
+                    <Button Content="範囲の指定を解除" Click="OnClearRegionClick" Margin="0,6,0,0" />
+                </StackPanel>
+            </GroupBox>
 
             <GroupBox Header="対象">
-                <ListBox x:Name="TargetList" DisplayMemberPath="DisplayName"
+                <!-- 高さを固定する。スクロール内で * を使うと高さが決まらない。 -->
+                <ListBox x:Name="TargetList" Height="170" DisplayMemberPath="DisplayName"
                          SelectionChanged="OnTargetSelectionChanged" />
             </GroupBox>
-        </DockPanel>
+
+            <Button Content="対象一覧を更新" Click="OnRefreshClick" Margin="0,0,0,4" />
+        </StackPanel>
+        </ScrollViewer>
 
         <!-- ===== 右: プレビュー ===== -->
         <GroupBox Grid.Row="0" Grid.Column="1" Header="プレビュー">
             <Grid>
                 <Border Background="#1E1E1E">
-                    <Image x:Name="PreviewImage" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality" />
+                    <Grid>
+                        <Image x:Name="PreviewImage" Stretch="Uniform"
+                               RenderOptions.BitmapScalingMode="HighQuality" />
+
+                        <!-- ドラッグで OCR 対象の矩形を指定する（FR-CAP-05） -->
+                        <Canvas x:Name="SelectionCanvas" Background="Transparent" Cursor="Cross"
+                                MouseLeftButtonDown="OnSelectionStart"
+                                MouseMove="OnSelectionMove"
+                                MouseLeftButtonUp="OnSelectionEnd">
+                            <Rectangle x:Name="SelectionRectangle" Visibility="Collapsed"
+                                       Stroke="#4FC3F7" StrokeThickness="2" Fill="#334FC3F7" />
+                        </Canvas>
+                    </Grid>
                 </Border>
                 <TextBlock x:Name="PreviewPlaceholder" Foreground="#888" FontSize="13"
                            HorizontalAlignment="Center" VerticalAlignment="Center"

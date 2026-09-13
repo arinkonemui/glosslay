@@ -1,0 +1,27 @@
+STAGE 1
+Galvantula ex
+HP 260
+Evolves from Joltik
+Tera
+As long as this Pokémon is on your Bench, prevent all damage done to this
+Pokémon by attacks (both yours and your opponent's).
+Charged Web
+110+
+If your opponent's Active Pokémon is a Pokémon ex or
+Pokémon V, this attack does 110 more damage.
+Fulgurite
+180
+Discard all Energy from this Pokémon. During your
+opponent's next turn, they can't play any Item cards from
+their hand.
+weakness
+×2
+resistance
+retreat
+Pokémon ex rule
+When your Pokémon ex
+is Knocked Out, your opponent takes 2 Prize cards.
+Illus. 5ban Graphics
+SCR EN
+159/142
+©2024 Pokémon / Nintendo / Creatures / GAME FREAK

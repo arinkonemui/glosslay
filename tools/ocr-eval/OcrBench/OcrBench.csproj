@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    OcrBench — 前処理と OCR 精度の計測ツール（P0-3 / P0-7）
+
+    製品と同じコード（Glosslay.Core）を通して測るための道具。
+    Glosslay.slnx には入れていない。実行方法は README.md を参照。
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Glosslay.Bench</RootNamespace>
+    <!-- PNG の読み書きに WPF のコーデックを使う -->
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\Glosslay.Core\Glosslay.Core.csproj" />
+  </ItemGroup>
+
+</Project>

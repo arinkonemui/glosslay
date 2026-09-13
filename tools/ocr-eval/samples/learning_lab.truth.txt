@@ -1,0 +1,34 @@
+HOME
+DECKS
+PROFILE
+SHOP
+BATTLE PASS
+CARD DEX
+2,430
+1,895
+RANKED
+CASUAL
+LEARN
+BUILD & BATTLE
+Welcome to the Learning Lab! This
+is a great place to sharpen your
+skills with the Pokémon Trading
+Card Game!
+THE LEARNING LAB
+BEGINNER
+Basic Lessons
+1/5
+Learn the fundamentals of the Pokémon Trading Card Game.
+BEGINNER
+Standard Lessons
+0/11
+Learn about new mechanics of the Pokémon Trading Card Game.
+ADVANCED
+Mega Darkrai ex Deck
+0/3
+Learn the best strategies with your Mega Darkrai ex deck!
+ADVANCED
+Mega Greninja ex Deck
+0/3
+Learn the best strategies with your Mega Greninja ex Deck!
+ADVANCED
