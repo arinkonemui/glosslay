@@ -81,6 +81,19 @@ public static class CaptureTargetEnumerator
         return results;
     }
 
+    /// <summary>
+    /// 既知のウィンドウハンドルから対象を作る。
+    /// </summary>
+    /// <remarks>
+    /// ホットキーで「いま見ている画面」を撮るために使う（前面ウィンドウは <see cref="WindowFocus.Current"/>）。
+    /// 一覧に出すときと同じ基準で判定するため、撮っても黒くなるだけのウィンドウは弾かれる。
+    /// </remarks>
+    public static bool TryDescribe(nint windowHandle, out CaptureTarget target)
+    {
+        target = null!;
+        return windowHandle != 0 && TryDescribeWindow((HWND)windowHandle, out target);
+    }
+
     /// <summary>キャプチャ候補として妥当なウィンドウかを判定し、妥当なら <see cref="CaptureTarget"/> を作る。</summary>
     private static bool TryDescribeWindow(HWND hwnd, out CaptureTarget target)
     {

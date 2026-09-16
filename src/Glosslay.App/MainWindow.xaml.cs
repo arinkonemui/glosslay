@@ -9,6 +9,7 @@ using System.Windows.Media.Imaging;
 using Glosslay.Capture;
 using Glosslay.Configuration;
 using Glosslay.Imaging;
+using Glosslay.Input;
 using Glosslay.Ocr;
 using Glosslay.Translation;
 
@@ -63,6 +64,21 @@ public partial class MainWindow : Window, IDisposable
     private Point _dragOrigin;
     private bool _isDragging;
 
+    /// <summary>ホットキーの検出。設定が読めなければ null（ホットキーなしで動く）。</summary>
+    private HotkeyDetector? _hotkey;
+
+    /// <summary><c>WM_INPUT</c> を受け取るためのフック先。</summary>
+    private HwndSource? _hwndSource;
+
+    /// <summary>
+    /// 画面の翻訳が進行中か。
+    /// </summary>
+    /// <remarks>
+    /// 全画面だと数秒かかる（課題4）。その間に押し直されても受け付けない。
+    /// 受け付けると待ち行列ができ、同じ画面に API を何度も払うことになる（RULES.md 🟡-8）。
+    /// </remarks>
+    private bool _isTranslatingScreen;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -70,9 +86,60 @@ public partial class MainWindow : Window, IDisposable
         Closed += OnWindowClosed;
     }
 
-    /// <summary>キャプチャ画像の保存先。FR-CFG-00 に合わせて %APPDATA%\Glosslay\ 配下に置く。</summary>
-    private static string CaptureDirectory => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Glosslay", "captures");
+    /// <summary>
+    /// ウィンドウハンドルができた時点でホットキーの受信を始める（FR-MOD-01 / FR-INP-02）。
+    /// </summary>
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        StartHotkey();
+    }
+
+    private void StartHotkey()
+    {
+        var options = HotkeyOptions.Load();
+        if (!HotkeyGesture.TryParse(options.TranslateScreen, out var gesture))
+        {
+            // 設定の誤りでアプリ全体を止めない。ホットキーだけ無効にして理由を見せる。
+            HotkeyText.Text = $"ホットキー無効: hotkeys.json の「{options.TranslateScreen}」を解釈できません。";
+            return;
+        }
+
+        var handle = new WindowInteropHelper(this).Handle;
+        _hwndSource = HwndSource.FromHwnd(handle);
+        _hwndSource.AddHook(OnWindowMessage);
+
+        RawKeyboard.Register(handle);
+        _hotkey = new HotkeyDetector(gesture.Value);
+
+        HotkeyText.Text = $"{gesture.Value} — 前面の画面を翻訳して、原文の位置に重ねます";
+    }
+
+    /// <summary>
+    /// <c>WM_INPUT</c> を拾ってホットキーを判定する。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>キーの内容は判定に使ったらそのまま捨てる。記録・ログ出力をしないこと。</b>
+    /// Raw Input はシステム全体の打鍵を受け取るため、残せばキーロガーと変わらない。</para>
+    /// <para><c>handled</c> は立てない。<c>WM_INPUT</c> は <c>DefWindowProc</c> を通して
+    /// OS に後始末させる決まりがある。そもそも Raw Input は入力を横取りしないため、
+    /// ここで何をしてもゲームにはキーが届く（FR-INP-02）。</para>
+    /// </remarks>
+    private nint OnWindowMessage(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
+    {
+        if (msg == RawKeyboard.WmInput
+            && _hotkey is not null
+            && RawKeyboard.TryRead(lParam, out var virtualKey, out var isKeyUp)
+            && _hotkey.Process(virtualKey, isKeyUp))
+        {
+            _ = RunGuardedAsync(TranslateScreenAsync);
+        }
+
+        return 0;
+    }
+
+    /// <summary>キャプチャ画像の保存先（FR-CFG-00）。</summary>
+    private static string CaptureDirectory => GlosslayPaths.Captures;
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
@@ -110,6 +177,13 @@ public partial class MainWindow : Window, IDisposable
     /// <summary>キャプチャセッションと OCR エンジンを解放する。ウィンドウを閉じたときに呼ぶ。</summary>
     public void Dispose()
     {
+        if (_hwndSource is not null)
+        {
+            RawKeyboard.Unregister();
+            _hwndSource.RemoveHook(OnWindowMessage);
+            _hwndSource = null;
+        }
+
         ReleaseCapture();
         _overlay?.Close();
         _ocrEngine.Dispose();
@@ -311,15 +385,21 @@ public partial class MainWindow : Window, IDisposable
     /// <summary>
     /// フレームを OCR にかけられる形にする。範囲指定があれば切り出し、前処理を適用する。
     /// </summary>
+    /// <param name="frame">撮った画面。</param>
+    /// <param name="useRegion">
+    /// プレビュー上でドラッグした範囲を使うか。ホットキーでは <c>false</c> にする。
+    /// 範囲は一覧で選んだ対象の画像に対して引いたもので、前面の別ウィンドウに当てると
+    /// 見当違いの場所を切り抜くため。
+    /// </param>
     /// <returns>加工後の画像と、元画像へ座標を戻すための情報。</returns>
     private (Bgra32Image Image, PreprocessOptions Options, int OffsetX, int OffsetY)
-        PrepareForOcr(CapturedFrame frame)
+        PrepareForOcr(CapturedFrame frame, bool useRegion = true)
     {
         var image = frame.AsImage();
         var offsetX = 0;
         var offsetY = 0;
 
-        if (_region is { } region)
+        if (useRegion && _region is { } region)
         {
             // 範囲を絞ると検出コストが大きく下がる。全画面の 1/3 程度になる。
             image = image.Crop(region.X, region.Y, region.Width, region.Height);
@@ -760,7 +840,7 @@ public partial class MainWindow : Window, IDisposable
             var result = await _ocrEngine.RecognizeAsync(image).ConfigureAwait(true);
             var lines = MapToSource(result.Lines, options.Scale, offsetX, offsetY);
 
-            _overlay ??= new OverlayWindow { Owner = this };
+            var overlay = EnsureOverlay();
 
             // ウィンドウ指定なら、ゲームか操作ウィンドウが前面の間だけ表示する。
             // モニタ全体はどれがゲームか特定できないため追従しない（自動フェードのみ）。
@@ -768,18 +848,18 @@ public partial class MainWindow : Window, IDisposable
                 ? [target.Handle, new WindowInteropHelper(this).Handle]
                 : null;
 
-            _overlay.ShowLines(
+            overlay.ShowLines(
                 lines, bounds, frame.Width, frame.Height, keepVisibleFor);
             OverlayHideButton.IsEnabled = true;
 
             // P0-6 の検証項目。設定したつもりで終わらせず、実際の値を出す。
-            var style = _overlay.StyleState;
+            var style = overlay.StyleState;
             ResultText.Text = string.Join(Environment.NewLine,
                 $"重ねた先       : {bounds.X},{bounds.Y} {bounds.Width}x{bounds.Height}（物理px）",
                 $"認識画像       : {frame.Width}x{frame.Height}（このボタンで撮り直したもの）",
                 $"表示した行     : {lines.Count}",
                 $"前処理         : {options}",
-                $"自動で消える   : {_overlay.AutoHideAfter.TotalSeconds:F0} 秒後（FR-OVL-06）",
+                $"自動で消える   : {overlay.AutoHideAfter.TotalSeconds:F0} 秒後（FR-OVL-06）",
                 $"前面の追従     : {(keepVisibleFor is null ? "なし（モニタ全体のため）" : "ゲームと操作画面のみ表示")}",
                 string.Empty,
                 "拡張スタイルの実測値（RULES.md が必須と定める4つ）",
@@ -801,6 +881,188 @@ public partial class MainWindow : Window, IDisposable
         }
 
         static string Mark(bool value) => value ? "OK" : "未設定";
+    }
+
+    /// <summary>
+    /// オーバーレイを用意する。
+    /// </summary>
+    /// <remarks>
+    /// <para><b><c>Owner</c> を設定してはいけない。</b>WPF では所有元を最小化すると
+    /// 所有ウィンドウも一緒に最小化される。ホットキーは「操作ウィンドウを最小化してゲームをする」
+    /// 使い方で押されるため、所有させると<b>訳文が黙って出なくなる</b>
+    /// （最小化状態でも IsVisible は true のため、ShowLines の再表示も効かない）。</para>
+    /// <para>所有させない代わりに、閉じるのは <see cref="Dispose"/> で明示的に行う。
+    /// 最前面は Topmost が、Alt+Tab に出ないことは WS_EX_TOOLWINDOW が担うため、所有関係は要らない。</para>
+    /// </remarks>
+    private OverlayWindow EnsureOverlay() => _overlay ??= new OverlayWindow();
+
+    // ===== ホットキーで画面を翻訳（FR-MOD-01 手動モード） =====
+
+    /// <summary>
+    /// 前面の画面を撮り、まとめて翻訳して、訳文を原文の位置に重ねる。
+    /// </summary>
+    /// <remarks>
+    /// <para>想定している場面: スキルアイコンに触れると<b>別の場所</b>に説明が出て、
+    /// カーソルを外すと消える。カーソル位置モード（FR-MOD-09）では説明の場所を撮れないため、
+    /// キーを押した瞬間の画面全体を翻訳する。</para>
+    /// <para><b>撮影を最優先にする。</b>「翻訳中…」が出た時点で撮り終えているので、
+    /// そこから先はカーソルを動かしてよい。</para>
+    /// </remarks>
+    private async Task TranslateScreenAsync()
+    {
+        if (_isTranslatingScreen)
+        {
+            return;
+        }
+
+        _isTranslatingScreen = true;
+        try
+        {
+            var target = ResolveHotkeyTarget();
+            if (target is null)
+            {
+                StatusText.Text = "ホットキー: 翻訳する画面を特定できませんでした。";
+                return;
+            }
+
+            if (!CaptureTargetBounds.TryGet(target, out var bounds))
+            {
+                StatusText.Text = $"ホットキー: {target.DisplayName} の画面上の位置を取得できませんでした。";
+                return;
+            }
+
+            // モニタ全体を撮るときに、前回の訳文を自分で読み取ってしまわないよう先に消す。
+            _overlay?.HideOverlay();
+
+            var total = Stopwatch.StartNew();
+            var capture = await EnsureCaptureAsync(target).ConfigureAwait(true);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var frame = await capture.GetNextFrameAsync(timeout.Token).ConfigureAwait(true);
+            var captureMs = total.Elapsed.TotalMilliseconds;
+            UpdatePreview(target, frame);
+
+            var overlay = EnsureOverlay();
+
+            // ゲームか操作ウィンドウが前面の間だけ出す。モニタ全体はどれがゲームか分からないため追従しない。
+            IReadOnlyList<nint>? keepVisibleFor = target.Kind == CaptureTargetKind.Window
+                ? [target.Handle, new WindowInteropHelper(this).Handle]
+                : null;
+
+            // ここで撮り終えている。受け付けたことをゲーム画面の上で返す。
+            overlay.ShowMessage("翻訳中…", bounds, frame.Width, frame.Height, keepVisibleFor);
+
+            var (image, options, _, _) = PrepareForOcr(frame, useRegion: false);
+            var ocr = await _ocrEngine.RecognizeAsync(image).ConfigureAwait(true);
+
+            // 読み順に並べてから渡す。崩れた順で渡すと文脈が壊れて訳が悪くなる。
+            var lines = InReadingOrder(MapToSource(ocr.Lines, options.Scale, 0, 0));
+            _lastOcrLines = lines;
+            TranslateButton.IsEnabled = lines.Count > 0;
+            PreviewImage.Source = DrawBoxes(_lastBitmap!, lines);
+
+            if (lines.Count == 0)
+            {
+                overlay.ShowMessage("文字が見つかりませんでした", bounds, frame.Width, frame.Height, keepVisibleFor);
+                StatusText.Text = $"ホットキー: {target.DisplayName} に文字が見つかりませんでした。";
+                return;
+            }
+
+            var translated = await LineTranslation.TranslateAsync(_translator, lines).ConfigureAwait(true);
+
+            if (translated.Translation.IsSuccess)
+            {
+                overlay.ShowLines(translated.Lines, bounds, frame.Width, frame.Height, keepVisibleFor);
+            }
+            else
+            {
+                overlay.ShowMessage(
+                    $"翻訳できませんでした: {ShortOutcome(translated.Translation.Outcome)}",
+                    bounds, frame.Width, frame.Height, keepVisibleFor);
+            }
+
+            OverlayHideButton.IsEnabled = true;
+            ShowScreenTranslationReport(target, frame, lines, translated, captureMs,
+                ocr.Elapsed.TotalMilliseconds, total.Elapsed.TotalMilliseconds);
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText.Text = "ホットキー: 画面が 5 秒以内に取得できませんでした。";
+        }
+        finally
+        {
+            _isTranslatingScreen = false;
+        }
+    }
+
+    /// <summary>
+    /// ホットキーで翻訳する画面を決める。
+    /// </summary>
+    /// <remarks>
+    /// <para>ゲーム中に押されたなら、前面にあるのがゲーム。一覧から選ぶ必要がない。</para>
+    /// <para>一覧の選択を使うのは<b>操作ウィンドウが前面のときだけ</b>（PoC の検証用）。
+    /// デスクトップなど撮れないものが前面のときに一覧へ黙って切り替えると、
+    /// 見ていない画面を翻訳することになり予測しにくい。その場合は何もしない。</para>
+    /// </remarks>
+    private CaptureTarget? ResolveHotkeyTarget()
+    {
+        var foreground = WindowFocus.Current;
+        if (foreground == new WindowInteropHelper(this).Handle)
+        {
+            return TargetList.SelectedItem as CaptureTarget;
+        }
+
+        return CaptureTargetEnumerator.TryDescribe(foreground, out var target) ? target : null;
+    }
+
+    /// <summary>オーバーレイに出す短い失敗理由。詳細は操作ウィンドウに出す。</summary>
+    private static string ShortOutcome(TranslationOutcome outcome) => outcome switch
+    {
+        TranslationOutcome.NotConfigured => "APIキーが未登録です",
+        TranslationOutcome.RateLimited => "利用上限に達しました（しばらく待つと戻ります）",
+        TranslationOutcome.NetworkError => "通信できませんでした",
+        TranslationOutcome.ServiceError => "翻訳サービスがエラーを返しました",
+        TranslationOutcome.Blocked => "翻訳が拒否されました",
+        _ => outcome.ToString(),
+    };
+
+    /// <summary>
+    /// 操作ウィンドウに内訳を出す。
+    /// </summary>
+    /// <remarks>
+    /// 工程ごとの時間を分けて出すのは課題4（全画面が 1.5 秒に収まらない）の計測のため。
+    /// 対応付けの数を出すのは、LLM が番号の形式を守らなかったときに黙って欠落させないため。
+    /// </remarks>
+    private void ShowScreenTranslationReport(
+        CaptureTarget target, CapturedFrame frame, List<OcrLine> source,
+        LineTranslationResult translated, double captureMs, double ocrMs, double totalMs)
+    {
+        var translation = translated.Translation;
+        var pairs = source.Select((from, i) => translated.IsMapped[i]
+            ? $"  {from.Text}  →  {translated.Lines[i].Text}"
+            : $"  {from.Text}  →  （対応なし・原文のまま）");
+
+        ResultText.Text = string.Join(Environment.NewLine,
+            [
+                $"ホットキー     : 前面の画面を翻訳（FR-MOD-01）",
+                $"対象           : {target}",
+                $"画面           : {frame.Width}x{frame.Height}（範囲指定は使わない）",
+                $"バックエンド   : {_translator.Name}",
+                $"状態           : {DescribeOutcome(translation)}",
+                $"対応付け       : {translated.MappedCount}/{source.Count} 行",
+                string.Empty,
+                $"撮影           : {captureMs,6:F0} ms",
+                $"OCR            : {ocrMs,6:F0} ms",
+                $"翻訳           : {translation.Elapsed.TotalMilliseconds,6:F0} ms"
+                    + (translation.TotalTokens is { } tokens ? $"（{tokens} トークン）" : string.Empty),
+                $"合計           : {totalMs,6:F0} ms（要件 1.5 秒）",
+                string.Empty,
+                "--- 原文 → 訳文 ---",
+                .. pairs,
+            ]);
+
+        StatusText.Text = translation.IsSuccess
+            ? $"ホットキー: {translated.MappedCount}/{source.Count} 行を翻訳 / 合計 {totalMs:F0} ms"
+            : $"ホットキー: 翻訳失敗 — {translation.Message}";
     }
 
     private void OnOverlayHideClick(object sender, RoutedEventArgs e)

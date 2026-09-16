@@ -48,6 +48,23 @@ CRYPT_INTEGER_BLOB
 CRYPTPROTECT_UI_FORBIDDEN
 LocalFree
 
+// --- ホットキー（FR-INP-02「Raw Input で検知し、キー入力はゲームにそのまま流す」） ---
+// RULES.md 🔴-3: RegisterHotKey（キーがゲームに届かなくなる）と
+// WH_KEYBOARD_LL（キーロガー誤検知）は禁止。Raw Input が唯一の許可された方法。
+// RIDEV_INPUTSINK は「前面でなくても受け取る」指定で、入力を横取りはしない。
+RegisterRawInputDevices
+GetRawInputData
+RAWINPUTDEVICE
+RAWINPUT
+RAWINPUTHEADER
+RAWKEYBOARD
+RAWINPUTDEVICE_FLAGS
+RAW_INPUT_DATA_COMMAND_FLAGS
+HRAWINPUT
+WM_INPUT
+RI_KEY_BREAK
+RID_DEVICE_INFO_TYPE
+
 // --- キャプチャ対象の列挙（ウィンドウ指定 / モニタ全体の切替: FR-CAP-02） ---
 EnumWindows
 IsWindowVisible

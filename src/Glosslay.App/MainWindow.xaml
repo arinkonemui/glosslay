@@ -103,6 +103,13 @@
                     <TextBlock x:Name="TranslatorStateText" TextWrapping="Wrap" FontSize="11"
                                Foreground="#666" Text="確認中…" />
 
+                    <!-- FR-MOD-01 手動モード。ゲーム中に押す想定のため、ここに操作を明示しておく。 -->
+                    <TextBlock Text="ホットキー" Margin="0,8,0,2" FontSize="11" />
+                    <TextBlock x:Name="HotkeyText" TextWrapping="Wrap" FontWeight="SemiBold"
+                               Text="準備中…" />
+                    <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,4,0,0"
+                               Text="ゲーム中に押すと、その瞬間の画面を撮って翻訳します。「翻訳中…」が出たら撮影済みなので、カーソルを動かして構いません。キーはゲームにもそのまま届きます (FR-INP-02)。変更は hotkeys.json で。" />
+
                     <TextBlock Text="APIキー" Margin="0,8,0,2" FontSize="11" />
                     <!-- PasswordBox にしているのは、画面に出さないため。
                          スクリーンショットを撮って人に送ってもキーが写らない。 -->

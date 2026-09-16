@@ -19,7 +19,8 @@ namespace Glosslay;
 ///   <item>クリックスルーが効く（クリックが下のゲームに透過する）</item>
 ///   <item>ゲームのフォーカスを奪わない</item>
 /// </list>
-/// <para>翻訳は P0-5 で入るため、現時点では OCR の結果（原文）をそのまま重ねて表示する。</para>
+/// <para>「オーバーレイ表示」ボタンは OCR の結果（原文）を、
+/// ホットキー（FR-MOD-01）は訳文を、それぞれ原文の位置に重ねる（FR-OVL-04 ①）。</para>
 /// </remarks>
 public partial class OverlayWindow : Window
 {
@@ -110,6 +111,33 @@ public partial class OverlayWindow : Window
 
         ApplyLayout();
         _watchdog.Start();
+    }
+
+    /// <summary>
+    /// 対象の左上に短い知らせを 1 行出す（「翻訳中…」「文字が見つかりませんでした」など）。
+    /// </summary>
+    /// <remarks>
+    /// <para>ホットキーはゲーム中に押されるため、操作ウィンドウの表示は見えない。
+    /// 押したのに数秒間なにも起きないと、効いていないと思って押し直される
+    /// （そのたびに API を呼ぶことになる）。受け付けたことをゲーム画面の上で返す。</para>
+    /// <para>表示の仕組み（前面の追従・自動フェード）は <see cref="ShowLines"/> と共通にしている。</para>
+    /// </remarks>
+    public void ShowMessage(
+        string message,
+        ScreenRect bounds,
+        int sourceWidth,
+        int sourceHeight,
+        IReadOnlyList<nint>? keepVisibleWhileForeground = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(message);
+
+        // 1080p でおよそ 18px の文字になる高さ。解像度に比例させる。
+        var height = Math.Max(24, sourceHeight / 36);
+        var margin = Math.Max(8, sourceHeight / 60);
+
+        ShowLines(
+            [new OcrLine(message, 1f, new OcrBox(margin, margin, 1, height))],
+            bounds, sourceWidth, sourceHeight, keepVisibleWhileForeground);
     }
 
     /// <summary>表示を消す。ウィンドウ自体は使い回す（再表示を速くするため）。</summary>

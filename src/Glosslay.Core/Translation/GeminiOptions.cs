@@ -1,7 +1,3 @@
-using System.Text.Encodings.Web;
-using System.Text.Json;
-using System.Text.Json.Serialization;
-using System.Text.Unicode;
 using Glosslay.Configuration;
 
 namespace Glosslay.Translation;
@@ -103,49 +99,12 @@ public sealed record GeminiOptions
         - 意味が取れない断片は、その断片だけ原文のまま残してください。
         """;
 
-    private static string FilePath => Path.Combine(GlosslayPaths.Root, "gemini.json");
+    /// <summary>設定ファイル名。</summary>
+    public const string FileName = "gemini.json";
 
-    private static JsonSerializerOptions SerializerOptions { get; } = new()
-    {
-        WriteIndented = true,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    /// <summary>設定を読み込む。ファイルが無い / 壊れている場合は既定値を返す。</summary>
+    public static GeminiOptions Load() => JsonSettings.Load(FileName, () => new GeminiOptions());
 
-        // 既定のエンコーダは日本語を あ 形式へ逃がす。
-        // プロンプトを手で直せなければ設定として意味がない（RULES.md 🔵「人が読める JSON」）。
-        // UnsafeRelaxedJsonEscaping ではなく範囲指定にしているのは、
-        // < > & のエスケープを残しておくため。
-        Encoder = JavaScriptEncoder.Create(UnicodeRanges.All),
-    };
-
-    /// <summary>
-    /// 設定を読み込む。ファイルが無い / 壊れている場合は既定値を返す。
-    /// </summary>
-    /// <remarks>
-    /// 設定が読めないだけでアプリが起動しないのは割に合わないため、ここは既定値に倒す。
-    /// </remarks>
-    public static GeminiOptions Load()
-    {
-        try
-        {
-            return File.Exists(FilePath)
-                ? JsonSerializer.Deserialize<GeminiOptions>(File.ReadAllText(FilePath), SerializerOptions)
-                  ?? new GeminiOptions()
-                : new GeminiOptions();
-        }
-        catch (JsonException)
-        {
-            return new GeminiOptions();
-        }
-        catch (IOException)
-        {
-            return new GeminiOptions();
-        }
-    }
-
-    /// <summary>設定を書き出す。利用者が手で編集できるようにするため整形する。</summary>
-    public void Save()
-    {
-        GlosslayPaths.EnsureDirectory(GlosslayPaths.Root);
-        File.WriteAllText(FilePath, JsonSerializer.Serialize(this, SerializerOptions));
-    }
+    /// <summary>設定を書き出す。</summary>
+    public void Save() => JsonSettings.Save(FileName, this);
 }
