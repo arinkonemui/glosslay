@@ -1,0 +1,17 @@
+ARBALEST
+A long range sniper with a massive gun that can deal devastating damage.
+DIFFICULTY
+FIREPOWER
+DURABILITY
+MOBILITY
+SCOUTING
+SIEGE
+Transforms into a stationary siege mode for the next shot that
+increases damage and penetration by 30% and knocks out all
+internal modules.
+ENERGY COST:
+30
+COOLDOWN:
+15s
+DURATION:
+20s

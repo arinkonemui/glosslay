@@ -107,6 +107,10 @@ internal static partial class Program
                           + $"正解 {truthLines.Count} 行 / 数値 {truthNumbers.Count} 種 ===");
         Console.WriteLine($"  {"設定",-20} {"一致度",6}  {"数値",7}  {"行数",5}  {"時間",7}");
 
+        // 数字だけでは「何を間違えたか」が分からず、P0-7 の 3 段階判定ができない。
+        // 一番成績の良かった設定の認識結果を後で並べて見せる。
+        var best = (Similarity: -1.0, Config: string.Empty, Lines: (IReadOnlyList<OcrLine>)[]);
+
         foreach (var (configName, options) in Configurations)
         {
             var processed = ImagePreprocessor.Apply(image, options);
@@ -122,6 +126,11 @@ internal static partial class Program
             Console.WriteLine($"  {Mark(similarity)}{configName,-18} {similarity * 100,5:F1}%  "
                               + $"{found,2}/{truthNumbers.Count,-4}  {result.Lines.Count,4}  {ms,5:F0}ms");
 
+            if (similarity > best.Similarity)
+            {
+                best = (similarity, configName, result.Lines);
+            }
+
             var previous = totals.GetValueOrDefault(configName);
             totals[configName] = previous with
             {
@@ -132,7 +141,34 @@ internal static partial class Program
             };
         }
 
+        PrintBestRecognition(best.Config, best.Lines, truthLines);
         Console.WriteLine();
+    }
+
+    /// <summary>
+    /// 一番成績の良かった設定の認識結果を、正解と並べて出す。
+    /// </summary>
+    /// <remarks>
+    /// P0-7 の 3 段階判定（✅成功 / ⚠️許容 / ❌失敗）は人が行う。
+    /// 一致度の数字だけでは「誤字なのか文意が壊れたのか」を分けられないため、
+    /// 判定できる材料をここで出す（PLAN.md P0-7「計測用のログ出力」）。
+    /// </remarks>
+    private static void PrintBestRecognition(
+        string configName, IReadOnlyList<OcrLine> lines, IReadOnlyList<string> truthLines)
+    {
+        Console.WriteLine();
+        Console.WriteLine($"  --- 認識結果（{configName}）---");
+
+        foreach (var line in ReadingOrder(lines))
+        {
+            Console.WriteLine($"    {line.Confidence:F2}  {line.Text}");
+        }
+
+        Console.WriteLine("  --- 正解 ---");
+        foreach (var line in truthLines)
+        {
+            Console.WriteLine($"          {line}");
+        }
     }
 
     private static void PrintSummary(Dictionary<string, Totals> totals, int sampleCount)

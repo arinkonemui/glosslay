@@ -38,6 +38,16 @@ WINDOW_LONG_PTR_INDEX
 // 前面ウィンドウのハンドルを問い合わせるだけで、ゲームプロセスには一切触れない。
 GetForegroundWindow
 
+// --- APIキーのローカル暗号化（FR-TRN-05） ---
+// DPAPI。現在のユーザーの資格情報で暗号化するため、鍵の管理を自前で行わずに済む。
+// System.Security.Cryptography.ProtectedData パッケージでも同じことができるが、
+// CsWin32 なら実行時 DLL が増えない（RULES.md 🔵「依存関係を増やすときは相談する」）。
+CryptProtectData
+CryptUnprotectData
+CRYPT_INTEGER_BLOB
+CRYPTPROTECT_UI_FORBIDDEN
+LocalFree
+
 // --- キャプチャ対象の列挙（ウィンドウ指定 / モニタ全体の切替: FR-CAP-02） ---
 EnumWindows
 IsWindowVisible

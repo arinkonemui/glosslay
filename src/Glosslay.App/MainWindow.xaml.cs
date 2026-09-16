@@ -7,8 +7,10 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Glosslay.Capture;
+using Glosslay.Configuration;
 using Glosslay.Imaging;
 using Glosslay.Ocr;
+using Glosslay.Translation;
 
 namespace Glosslay;
 
@@ -28,6 +30,19 @@ public partial class MainWindow : Window, IDisposable
     private static readonly TimeSpan CaptureDelay = TimeSpan.FromSeconds(5);
 
     private readonly PaddleOcrEngine _ocrEngine = new();
+    private readonly ApiKeyStore _apiKeyStore = ApiKeyStore.Gemini;
+
+    /// <summary>
+    /// 翻訳バックエンド。<see cref="ITranslator"/> 越しに持つ（RULES.md 🟡-2）。
+    /// </summary>
+    /// <remarks>
+    /// gemini.json を編集したら作り直すため、フィールドは差し替え可能にしている。
+    /// </remarks>
+#pragma warning disable CA1859 // 具象型の方が速いが、ここは差し替え点。
+                              // v1.0 で LocalNmtTranslator に切り替える前提のため
+                              // インターフェースのまま持つ（RULES.md 🟡-2）。
+    private ITranslator _translator = new GeminiTranslator();
+#pragma warning restore CA1859
 
     private ScreenCapture? _capture;
     private CaptureTarget? _activeTarget;
@@ -41,6 +56,9 @@ public partial class MainWindow : Window, IDisposable
 
     /// <summary>OCR の対象範囲（元画像の画素座標）。null なら全体。</summary>
     private Int32Rect? _region;
+
+    /// <summary>直前の OCR 結果。翻訳ボタンが原文として使う。</summary>
+    private IReadOnlyList<OcrLine> _lastOcrLines = [];
 
     private Point _dragOrigin;
     private bool _isDragging;
@@ -67,6 +85,7 @@ public partial class MainWindow : Window, IDisposable
         }
 
         RefreshTargets();
+        RefreshTranslatorState();
 
         // FR-OCR-08: 初回 OCR で待たせないよう、起動時に非同期でモデルを読み込んでおく。
         _ = WarmUpOcrAsync();
@@ -94,6 +113,7 @@ public partial class MainWindow : Window, IDisposable
         ReleaseCapture();
         _overlay?.Close();
         _ocrEngine.Dispose();
+        _translator.Dispose();
         GC.SuppressFinalize(this);
     }
 
@@ -472,6 +492,9 @@ public partial class MainWindow : Window, IDisposable
             var result = await _ocrEngine.RecognizeAsync(image).ConfigureAwait(true);
             var lines = MapToSource(result.Lines, options.Scale, offsetX, offsetY);
 
+            _lastOcrLines = lines;
+            TranslateButton.IsEnabled = lines.Count > 0;
+
             PreviewImage.Source = DrawBoxes(_lastBitmap, lines);
             ResultText.Text = string.Join(Environment.NewLine,
                 $"前処理     : {options}",
@@ -488,6 +511,146 @@ public partial class MainWindow : Window, IDisposable
         {
             OcrButton.IsEnabled = true;
         }
+    }
+
+    // ===== 翻訳（P0-5） =====
+
+    private void RefreshTranslatorState()
+    {
+        var configured = _translator.IsConfigured;
+
+        TranslatorStateText.Text = configured
+            ? $"{_translator.Name} — キー登録済み"
+            : $"{_translator.Name} — キー未登録";
+
+        DeleteApiKeyButton.IsEnabled = configured;
+    }
+
+    private void OnSaveApiKeyClick(object sender, RoutedEventArgs e)
+    {
+        // Password は読んだ直後に使い切り、変数にも UI にも残さない。
+        if (string.IsNullOrWhiteSpace(ApiKeyBox.Password))
+        {
+            StatusText.Text = "APIキーが空です。";
+            return;
+        }
+
+        _apiKeyStore.Save(ApiKeyBox.Password);
+        ApiKeyBox.Clear();
+
+        RefreshTranslatorState();
+        StatusText.Text = "APIキーを暗号化して保存しました。「翻訳を実行」で試せます。";
+    }
+
+    private void OnDeleteApiKeyClick(object sender, RoutedEventArgs e)
+    {
+        _apiKeyStore.Delete();
+        ApiKeyBox.Clear();
+
+        RefreshTranslatorState();
+        StatusText.Text = "APIキーを削除しました。";
+    }
+
+    /// <summary>
+    /// モデル名などの設定ファイルを開く（FR-TRN-07 / RULES.md 🟡-3）。
+    /// </summary>
+    /// <remarks>
+    /// 無ければ既定値で作ってから開く。ファイルが存在しないと「どこを直せばいいのか」が分からない。
+    /// 閉じた後に読み直すのではなく、開くたびに翻訳側を作り直して反映させる。
+    /// </remarks>
+    private void OnOpenGeminiSettingsClick(object sender, RoutedEventArgs e)
+    {
+        var path = Path.Combine(GlosslayPaths.Root, "gemini.json");
+        if (!File.Exists(path))
+        {
+            GeminiOptions.Load().Save();
+        }
+
+        Process.Start(new ProcessStartInfo(path) { UseShellExecute = true })?.Dispose();
+
+        // 編集後に「更新」を押させるのは忘れるため、次の翻訳で必ず読み直す形にする。
+        _translator.Dispose();
+        _translator = new GeminiTranslator();
+        RefreshTranslatorState();
+
+        StatusText.Text = "gemini.json を開きました。保存すると次の翻訳から反映されます。";
+    }
+
+    private async void OnTranslateClick(object sender, RoutedEventArgs e)
+        => await RunGuardedAsync(RunTranslateAsync).ConfigureAwait(true);
+
+    private async Task RunTranslateAsync()
+    {
+        if (_lastOcrLines.Count == 0)
+        {
+            StatusText.Text = "先に OCR を実行してください。";
+            return;
+        }
+
+        // 読み順に並べ、改行で繋いで 1 回の呼び出しにまとめる。
+        // FR-TRN-10 の「行分割で切れた文の結合」は未実装（PoC の範囲外）。
+        // 行をまとめず 1 行ずつ投げると呼び出し回数が行数倍になり、RULES.md 🟡-8 に反する。
+        var source = string.Join(
+            Environment.NewLine, InReadingOrder(_lastOcrLines).Select(line => line.Text));
+
+        TranslateButton.IsEnabled = false;
+        StatusText.Text = "翻訳中…";
+        try
+        {
+            var result = await _translator
+                .TranslateAsync(new TranslationRequest(source))
+                .ConfigureAwait(true);
+
+            ResultText.Text = string.Join(Environment.NewLine,
+                $"バックエンド : {_translator.Name}",
+                $"処理時間     : {result.Elapsed.TotalMilliseconds:F0} ms"
+                    + (result.TotalTokens is { } tokens ? $" / {tokens} トークン" : string.Empty),
+                $"状態         : {DescribeOutcome(result)}",
+                string.Empty,
+                "--- 原文 ---",
+                source,
+                string.Empty,
+                "--- 訳文 ---",
+                result.IsSuccess ? result.Text : "（なし）");
+
+            StatusText.Text = result.IsSuccess
+                ? $"翻訳完了: {result.Elapsed.TotalMilliseconds:F0} ms"
+                : $"翻訳失敗: {result.Message}";
+        }
+        finally
+        {
+            TranslateButton.IsEnabled = true;
+        }
+    }
+
+    /// <summary>
+    /// 結果を利用者向けの文にする。
+    /// </summary>
+    /// <remarks>
+    /// フォールバック対象かどうかを明示している。v1.0 ではここでローカルNMTへ切り替わる
+    /// （FR-TRN-06）が、PoC はローカルNMT未実装のため「切り替え先がない」と伝えるに留める。
+    /// </remarks>
+    private static string DescribeOutcome(TranslationResult result)
+    {
+        var state = result.Outcome switch
+        {
+            TranslationOutcome.Succeeded => "成功",
+            TranslationOutcome.NotConfigured => "キー未登録",
+            TranslationOutcome.RateLimited => "利用上限（HTTP 429）",
+            TranslationOutcome.NetworkError => "通信エラー",
+            TranslationOutcome.ServiceError => "サービスエラー",
+            TranslationOutcome.Blocked => "応答が拒否された",
+            _ => result.Outcome.ToString(),
+        };
+
+        if (result.Message is { Length: > 0 } message)
+        {
+            state += $" — {message}";
+        }
+
+        return result.ShouldFallBack
+            ? state + "（v1.0 ではローカルNMTへ自動フォールバックする箇所。PoC は未実装）"
+            : state;
     }
 
     private static string FormatOcrResult(IReadOnlyList<OcrLine> lines)

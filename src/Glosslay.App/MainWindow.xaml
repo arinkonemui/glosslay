@@ -96,6 +96,30 @@
                 </StackPanel>
             </GroupBox>
 
+            <!-- P0-5。既定のバックエンドはローカルNMT（RULES.md 🟡-1）だが実装は v1.0。
+                 PoC では Gemini のみを通す。 -->
+            <GroupBox Header="翻訳 (P0-5 / Gemini)">
+                <StackPanel>
+                    <TextBlock x:Name="TranslatorStateText" TextWrapping="Wrap" FontSize="11"
+                               Foreground="#666" Text="確認中…" />
+
+                    <TextBlock Text="APIキー" Margin="0,8,0,2" FontSize="11" />
+                    <!-- PasswordBox にしているのは、画面に出さないため。
+                         スクリーンショットを撮って人に送ってもキーが写らない。 -->
+                    <PasswordBox x:Name="ApiKeyBox" Padding="4,3" FontFamily="Consolas" />
+                    <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,4,0,0"
+                               Text="DPAPI で暗号化して %APPDATA%\Glosslay\secrets\ に保存します (FR-TRN-05)。設定JSONには書きません。" />
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <Button x:Name="SaveApiKeyButton" Content="キーを保存" Click="OnSaveApiKeyClick" />
+                        <Button x:Name="DeleteApiKeyButton" Content="削除" Click="OnDeleteApiKeyClick" />
+                    </StackPanel>
+
+                    <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,10,0,0"
+                               Text="モデル名はハードコードせず設定値で持ちます (FR-TRN-07)。下のボタンで JSON を開いて変更できます。" />
+                    <Button Content="gemini.json を開く" Click="OnOpenGeminiSettingsClick" Margin="0,6,0,0" />
+                </StackPanel>
+            </GroupBox>
+
             <GroupBox Header="対象">
                 <!-- 高さを固定する。スクロール内で * を使うと高さが決まらない。 -->
                 <ListBox x:Name="TargetList" Height="170" DisplayMemberPath="DisplayName"
@@ -139,6 +163,8 @@
                 <Button x:Name="CaptureDelayedButton" Content="5秒後にキャプチャ" Click="OnCaptureDelayedClick" />
                 <Button x:Name="OcrButton" Content="OCR を実行" Click="OnOcrClick" IsEnabled="False"
                         FontWeight="SemiBold" />
+                <Button x:Name="TranslateButton" Content="翻訳を実行" Click="OnTranslateClick"
+                        IsEnabled="False" FontWeight="SemiBold" />
                 <Button x:Name="OverlayButton" Content="オーバーレイ表示" Click="OnOverlayClick"
                         IsEnabled="False" FontWeight="SemiBold" />
                 <Button x:Name="OverlayHideButton" Content="オーバーレイ消去" Click="OnOverlayHideClick"
