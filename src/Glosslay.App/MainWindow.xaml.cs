@@ -969,15 +969,22 @@ public partial class MainWindow : Window, IDisposable
 
             var translated = await LineTranslation.TranslateAsync(_translator, lines).ConfigureAwait(true);
 
-            if (translated.Translation.IsSuccess)
-            {
-                overlay.ShowLines(translated.Lines, bounds, frame.Width, frame.Height, keepVisibleFor);
-            }
-            else
+            if (!translated.Translation.IsSuccess)
             {
                 overlay.ShowMessage(
                     $"翻訳できませんでした: {ShortOutcome(translated.Translation.Outcome)}",
                     bounds, frame.Width, frame.Height, keepVisibleFor);
+            }
+            else if (translated.LinesToOverlay.Count == 0)
+            {
+                // 数値だけの画面や、既に日本語の画面。何も重ねないと「効いていない」と区別できない。
+                overlay.ShowMessage(
+                    "訳す必要のある文字はありませんでした", bounds, frame.Width, frame.Height, keepVisibleFor);
+            }
+            else
+            {
+                // 訳して文字が変わった行だけを重ねる。数値だけの行や原文と同じ訳は重ねない。
+                overlay.ShowLines(translated.LinesToOverlay, bounds, frame.Width, frame.Height, keepVisibleFor);
             }
 
             OverlayHideButton.IsEnabled = true;
@@ -1029,17 +1036,28 @@ public partial class MainWindow : Window, IDisposable
     /// 操作ウィンドウに内訳を出す。
     /// </summary>
     /// <remarks>
-    /// 工程ごとの時間を分けて出すのは課題4（全画面が 1.5 秒に収まらない）の計測のため。
-    /// 対応付けの数を出すのは、LLM が番号の形式を守らなかったときに黙って欠落させないため。
+    /// <para>工程ごとの時間を分けて出すのは課題4（全画面が 1.5 秒に収まらない）の計測のため。</para>
+    /// <para>対応付けの数を出すのは、LLM が番号の形式を守らなかったときに黙って欠落させないため。</para>
+    /// <para>翻訳に回さなかった行も一覧に残す。除外のルールが訳すべき行まで落としていないか、
+    /// 実画面で目で確かめられるようにするため。</para>
     /// </remarks>
     private void ShowScreenTranslationReport(
         CaptureTarget target, CapturedFrame frame, List<OcrLine> source,
         LineTranslationResult translated, double captureMs, double ocrMs, double totalMs)
     {
         var translation = translated.Translation;
-        var pairs = source.Select((from, i) => translated.IsMapped[i]
-            ? $"  {from.Text}  →  {translated.Lines[i].Text}"
-            : $"  {from.Text}  →  （対応なし・原文のまま）");
+        var statuses = translated.Statuses;
+        var skipped = source.Where((_, i) => statuses[i] == LineTranslationStatus.Skipped).Select(l => l.Text);
+
+        var pairs = source
+            .Select((from, i) => statuses[i] switch
+            {
+                LineTranslationStatus.Translated => $"  {from.Text}  →  {translated.Lines[i].Text}",
+                LineTranslationStatus.Unchanged => $"  {from.Text}  →  （原文と同じ・重ねない）",
+                LineTranslationStatus.Unmapped => $"  {from.Text}  →  （対応なし・重ねない）",
+                _ => null,
+            })
+            .OfType<string>();
 
         ResultText.Text = string.Join(Environment.NewLine,
             [
@@ -1048,7 +1066,10 @@ public partial class MainWindow : Window, IDisposable
                 $"画面           : {frame.Width}x{frame.Height}（範囲指定は使わない）",
                 $"バックエンド   : {_translator.Name}",
                 $"状態           : {DescribeOutcome(translation)}",
-                $"対応付け       : {translated.MappedCount}/{source.Count} 行",
+                $"検出           : {source.Count} 行",
+                $"翻訳に回した   : {translated.SentCount} 行（数値・記号だけの {source.Count - translated.SentCount} 行は除外）",
+                $"対応付け       : {translated.MappedCount}/{translated.SentCount} 行",
+                $"重ねた         : {translated.LinesToOverlay.Count} 行（訳して文字が変わった行のみ）",
                 string.Empty,
                 $"撮影           : {captureMs,6:F0} ms",
                 $"OCR            : {ocrMs,6:F0} ms",
@@ -1058,10 +1079,14 @@ public partial class MainWindow : Window, IDisposable
                 string.Empty,
                 "--- 原文 → 訳文 ---",
                 .. pairs,
+                string.Empty,
+                $"--- 翻訳に回さなかった行 ---",
+                $"  {string.Join("  |  ", skipped)}",
             ]);
 
         StatusText.Text = translation.IsSuccess
-            ? $"ホットキー: {translated.MappedCount}/{source.Count} 行を翻訳 / 合計 {totalMs:F0} ms"
+            ? $"ホットキー: {translated.LinesToOverlay.Count} 行を重ねた"
+              + $"（{source.Count} 行中 {translated.SentCount} 行を翻訳）/ 合計 {totalMs:F0} ms"
             : $"ホットキー: 翻訳失敗 — {translation.Message}";
     }
 
