@@ -190,9 +190,18 @@ public static partial class LineTranslation
     /// 翻訳に渡す文を組み立てる。
     /// </summary>
     /// <remarks>
-    /// 形式の指示を<b>システム指示ではなく本文側</b>に書いている。
+    /// <para>形式の指示を<b>システム指示ではなく本文側</b>に書いている。
     /// システム指示は gemini.json で利用者が上書きできるため、そこに頼ると
-    /// 古い設定ファイルを持つ環境で番号が返らなくなる。
+    /// 古い設定ファイルを持つ環境で番号が返らなくなる。</para>
+    /// <para><b>番号の数は守らせるが、意味は行をまたいで振り分けさせる。</b>
+    /// 以前は「番号ごとに対応する部分だけを訳す」と指示していたため、OCR が
+    /// <c>…whenever you land after being</c> / <c>airborne</c> と割った文が
+    /// <c>着地するたびに…生成する</c> / <c>空中</c> になり、後ろの断片が浮いた（2026-09-18・問題 E）。
+    /// 同じ日の別の回では LLM がこの指示を緩めて 2 行へ意味を振り分け、自然に読める訳を返していたため、
+    /// その振る舞いを指示として明文化した。</para>
+    /// <para>「どの番号も空にしない」は、空の番号が対応なし（重ねない）になるのを避けるため。
+    /// 「数値を必ず残す」は、振り分けの途中で数値が落ちるのを防ぐため（RULES.md 🟡-7）。
+    /// システム指示にも同じ規則があるが、gemini.json で上書きされうるので本文側でも念を押す。</para>
     /// </remarks>
     public static string BuildRequestText(IReadOnlyList<string> lines)
     {
@@ -200,8 +209,11 @@ public static partial class LineTranslation
 
         var builder = new StringBuilder();
         builder.AppendLine("次の各行を翻訳してください。");
-        builder.AppendLine("各行の先頭の [番号] は必ずそのまま残し、1 つの番号につき 1 行で、同じ形式で出力してください。");
-        builder.AppendLine("行が文の途中で切れていても、行を結合・分割せず、番号ごとに対応する部分だけを訳してください。");
+        builder.AppendLine("各行の先頭の [番号] は必ずそのまま残し、1 つの番号につき 1 行で、同じ形式で出力してください。番号を増やしたり減らしたりしないでください。");
+        builder.AppendLine("これは画面の文字を読み取ったもので、1 つの文が途中で改行され、続けて並んだ複数の番号に分かれていることがあります。");
+        builder.AppendLine("その場合は文全体の意味で訳したうえで、上の番号から順に読んで自然な日本語になるよう、訳文を各番号に振り分けてください。どの番号も空にしないでください。");
+        builder.AppendLine("振り分けても、原文の数値は必ずいずれかの番号の訳文に残してください。");
+        builder.AppendLine("見出しと説明文のように別々の項目は、1 つの文として扱わないでください。");
         builder.AppendLine();
 
         for (var i = 0; i < lines.Count; i++)

@@ -671,7 +671,7 @@ public partial class MainWindow : Window, IDisposable
         // FR-TRN-10 の「行分割で切れた文の結合」は未実装（PoC の範囲外）。
         // 行をまとめず 1 行ずつ投げると呼び出し回数が行数倍になり、RULES.md 🟡-8 に反する。
         var source = string.Join(
-            Environment.NewLine, InReadingOrder(_lastOcrLines).Select(line => line.Text));
+            Environment.NewLine, TextAggregator.InReadingOrder(_lastOcrLines).Select(line => line.Text));
 
         TranslateButton.IsEnabled = false;
         StatusText.Text = "翻訳中…";
@@ -741,44 +741,8 @@ public partial class MainWindow : Window, IDisposable
                 + "範囲を絞る、または前処理（拡大・コントラスト）を試してください。";
         }
 
-        return string.Join(Environment.NewLine, InReadingOrder(lines)
+        return string.Join(Environment.NewLine, TextAggregator.InReadingOrder(lines)
             .Select(line => $"{line.Confidence:F3}  [{line.Box.X,5},{line.Box.Y,5}]  {line.Text}"));
-    }
-
-    /// <summary>
-    /// 認識結果を読み順に並べ直す。
-    /// </summary>
-    /// <remarks>
-    /// 縦位置が近いものを同じ行にまとめ、行内は左から右へ並べる。
-    /// Y 座標だけで並べると、同じ行の要素が 1px のずれで入れ替わる。
-    /// SPEC.md §2 の TextAggregator が本来担う処理の最小版。
-    /// </remarks>
-    private static List<OcrLine> InReadingOrder(IReadOnlyList<OcrLine> lines)
-    {
-        var rows = new List<List<OcrLine>>();
-
-        foreach (var line in lines.OrderBy(l => l.Box.Y))
-        {
-            var center = line.Box.Y + (line.Box.Height / 2.0);
-            var row = rows.FirstOrDefault(candidate =>
-            {
-                var head = candidate[0];
-                var headCenter = head.Box.Y + (head.Box.Height / 2.0);
-                var tolerance = Math.Max(head.Box.Height, line.Box.Height) * 0.5;
-                return Math.Abs(headCenter - center) < tolerance;
-            });
-
-            if (row is null)
-            {
-                rows.Add([line]);
-            }
-            else
-            {
-                row.Add(line);
-            }
-        }
-
-        return [.. rows.SelectMany(row => row.OrderBy(l => l.Box.X))];
     }
 
     /// <summary>認識できた位置を確認できるよう、プレビューに枠を重ねる。</summary>
@@ -955,7 +919,7 @@ public partial class MainWindow : Window, IDisposable
             var ocr = await _ocrEngine.RecognizeAsync(image).ConfigureAwait(true);
 
             // 読み順に並べてから渡す。崩れた順で渡すと文脈が壊れて訳が悪くなる。
-            var lines = InReadingOrder(MapToSource(ocr.Lines, options.Scale, 0, 0));
+            var lines = TextAggregator.InReadingOrder(MapToSource(ocr.Lines, options.Scale, 0, 0));
             _lastOcrLines = lines;
             TranslateButton.IsEnabled = lines.Count > 0;
             PreviewImage.Source = DrawBoxes(_lastBitmap!, lines);
