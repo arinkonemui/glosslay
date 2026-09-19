@@ -108,7 +108,7 @@
                     <TextBlock x:Name="HotkeyText" TextWrapping="Wrap" FontWeight="SemiBold"
                                Text="準備中…" />
                     <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,4,0,0"
-                               Text="ゲーム中に押すと、その瞬間の画面を撮って翻訳します。「翻訳中…」が出たら撮影済みなので、カーソルを動かして構いません。キーはゲームにもそのまま届きます (FR-INP-02)。変更は hotkeys.json で。" />
+                               Text="ゲーム中に押すと、その瞬間の画面を撮って翻訳します。「翻訳中…」が出たら撮影済みなので、カーソルを動かして構いません。訳文は押した瞬間の画面のものなので、画面が変わったら ON/OFF キーで消してください (FR-OVL-08)。キーはゲームにもそのまま届きます (FR-INP-02)。変更は hotkeys.json で。" />
 
                     <TextBlock Text="APIキー" Margin="0,8,0,2" FontSize="11" />
                     <!-- PasswordBox にしているのは、画面に出さないため。

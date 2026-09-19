@@ -29,11 +29,30 @@ public sealed record HotkeyOptions
     /// </remarks>
     public const string DefaultTranslateScreen = "Ctrl+Shift+T";
 
+    /// <summary>
+    /// オーバーレイの表示を ON/OFF するキーの既定値（FR-OVL-08）。
+    /// </summary>
+    /// <remarks>
+    /// <para>H は Hide の頭文字。翻訳キーと同じ修飾キーにしたのは、覚える組み合わせを増やさないため。</para>
+    /// <para><c>Esc</c> は使えない。キーはゲームにも届く（FR-INP-02）ため、
+    /// 訳文を消すつもりでゲームのメニューまで開いてしまう。</para>
+    /// </remarks>
+    public const string DefaultToggleOverlay = "Ctrl+Shift+H";
+
     /// <summary>設定ファイル名。</summary>
     public const string FileName = "hotkeys.json";
 
     /// <summary>前面の画面をまとめて翻訳するキー。</summary>
     public string TranslateScreen { get; init; } = DefaultTranslateScreen;
+
+    /// <summary>
+    /// オーバーレイの表示を ON/OFF するキー（FR-OVL-08）。
+    /// </summary>
+    /// <remarks>
+    /// 前の訳文が次の画面の上に残ったとき、すぐ消すためのもの（PLAN.md 問題 F）。
+    /// 消えているときに押すと、最後の訳文を API を呼ばずに出し直す。
+    /// </remarks>
+    public string ToggleOverlay { get; init; } = DefaultToggleOverlay;
 
     /// <summary>設定を読み込む。ファイルが無い / 壊れている場合は既定値を返す。</summary>
     public static HotkeyOptions Load() => JsonSettings.Load(FileName, () => new HotkeyOptions());

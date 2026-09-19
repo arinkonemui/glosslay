@@ -64,8 +64,11 @@ public partial class MainWindow : Window, IDisposable
     private Point _dragOrigin;
     private bool _isDragging;
 
-    /// <summary>ホットキーの検出。設定が読めなければ null（ホットキーなしで動く）。</summary>
-    private HotkeyDetector? _hotkey;
+    /// <summary>画面を翻訳するキーの検出。設定が読めなければ null（そのキーなしで動く）。</summary>
+    private HotkeyDetector? _translateHotkey;
+
+    /// <summary>オーバーレイの表示を ON/OFF するキーの検出（FR-OVL-08）。</summary>
+    private HotkeyDetector? _toggleHotkey;
 
     /// <summary><c>WM_INPUT</c> を受け取るためのフック先。</summary>
     private HwndSource? _hwndSource;
@@ -98,10 +101,31 @@ public partial class MainWindow : Window, IDisposable
     private void StartHotkey()
     {
         var options = HotkeyOptions.Load();
-        if (!HotkeyGesture.TryParse(options.TranslateScreen, out var gesture))
+        var problems = new List<string>();
+
+        // 設定の誤りでアプリ全体を止めない。使えないキーだけ無効にして理由を見せる。
+        HotkeyGesture? translate = HotkeyGesture.TryParse(options.TranslateScreen, out var t) ? t : null;
+        HotkeyGesture? toggle = HotkeyGesture.TryParse(options.ToggleOverlay, out var o) ? o : null;
+
+        if (translate is null)
         {
-            // 設定の誤りでアプリ全体を止めない。ホットキーだけ無効にして理由を見せる。
-            HotkeyText.Text = $"ホットキー無効: hotkeys.json の「{options.TranslateScreen}」を解釈できません。";
+            problems.Add($"hotkeys.json の翻訳キー「{options.TranslateScreen}」を解釈できません。");
+        }
+
+        if (toggle is null)
+        {
+            problems.Add($"hotkeys.json の ON/OFF キー「{options.ToggleOverlay}」を解釈できません。");
+        }
+        else if (toggle == translate)
+        {
+            // 同じ組み合わせだと、1 回押すたびに翻訳と ON/OFF が同時に走る。
+            toggle = null;
+            problems.Add("ON/OFF キーが翻訳キーと同じ組み合わせのため、ON/OFF キーを無効にしました。");
+        }
+
+        if (translate is null && toggle is null)
+        {
+            HotkeyText.Text = "ホットキー無効: " + string.Join(" ", problems);
             return;
         }
 
@@ -110,9 +134,21 @@ public partial class MainWindow : Window, IDisposable
         _hwndSource.AddHook(OnWindowMessage);
 
         RawKeyboard.Register(handle);
-        _hotkey = new HotkeyDetector(gesture.Value);
+        _translateHotkey = translate is { } translateGesture ? new HotkeyDetector(translateGesture) : null;
+        _toggleHotkey = toggle is { } toggleGesture ? new HotkeyDetector(toggleGesture) : null;
 
-        HotkeyText.Text = $"{gesture.Value} — 前面の画面を翻訳して、原文の位置に重ねます";
+        var descriptions = new List<string>();
+        if (translate is { } tg)
+        {
+            descriptions.Add($"{tg} — 前面の画面を翻訳して、原文の位置に重ねる");
+        }
+
+        if (toggle is { } og)
+        {
+            descriptions.Add($"{og} — 訳文を消す / 最後の訳文を出し直す");
+        }
+
+        HotkeyText.Text = string.Join(Environment.NewLine, [.. descriptions, .. problems]);
     }
 
     /// <summary>
@@ -127,12 +163,21 @@ public partial class MainWindow : Window, IDisposable
     /// </remarks>
     private nint OnWindowMessage(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
     {
-        if (msg == RawKeyboard.WmInput
-            && _hotkey is not null
-            && RawKeyboard.TryRead(lParam, out var virtualKey, out var isKeyUp)
-            && _hotkey.Process(virtualKey, isKeyUp))
+        if (msg != RawKeyboard.WmInput || !RawKeyboard.TryRead(lParam, out var virtualKey, out var isKeyUp))
+        {
+            return 0;
+        }
+
+        // 両方の検出器に同じ入力を必ず渡す。修飾キーの押下状態はそれぞれが持っているため、
+        // 片方にしか渡さないと、もう片方の Ctrl / Shift の状態がずれる。
+        if (_translateHotkey?.Process(virtualKey, isKeyUp) == true)
         {
             _ = RunGuardedAsync(TranslateScreenAsync);
+        }
+
+        if (_toggleHotkey?.Process(virtualKey, isKeyUp) == true)
+        {
+            _ = RunGuardedAsync(ToggleOverlayAsync);
         }
 
         return 0;
@@ -896,7 +941,9 @@ public partial class MainWindow : Window, IDisposable
             }
 
             // モニタ全体を撮るときに、前回の訳文を自分で読み取ってしまわないよう先に消す。
-            _overlay?.HideOverlay();
+            // 前回の訳文は出し直しの対象からも外す。新しい翻訳を頼んだ時点で古くなっているため
+            // （覚えたままだと、翻訳中に ON/OFF キーを 2 回押すと古い訳文が戻ってくる = 問題 F）。
+            _overlay?.Clear();
 
             var total = Stopwatch.StartNew();
             var capture = await EnsureCaptureAsync(target).ConfigureAwait(true);
@@ -1052,6 +1099,37 @@ public partial class MainWindow : Window, IDisposable
             ? $"ホットキー: {translated.LinesToOverlay.Count} 行を重ねた"
               + $"（{source.Count} 行中 {translated.SentCount} 行を翻訳）/ 合計 {totalMs:F0} ms"
             : $"ホットキー: 翻訳失敗 — {translation.Message}";
+    }
+
+    /// <summary>
+    /// オーバーレイの表示を切り替える（FR-OVL-08）。
+    /// </summary>
+    /// <remarks>
+    /// <para>前の訳文が次の画面の上に残ったとき（PLAN.md 問題 F）、すぐ消すためのもの。
+    /// 消えているときに押すと、最後の訳文を <b>API を呼ばずに</b>出し直す。</para>
+    /// <para>翻訳中に押すと「翻訳中…」を消す。翻訳が終われば訳文は表示される
+    /// （翻訳は利用者が明示的に頼んだものなので、結果は見せる）。</para>
+    /// </remarks>
+    private Task ToggleOverlayAsync()
+    {
+        if (_overlay is null)
+        {
+            StatusText.Text = "ホットキー: まだ訳文を表示していません。";
+            return Task.CompletedTask;
+        }
+
+        var wasVisible = _overlay.IsVisible;
+        var isVisible = _overlay.ToggleVisibility();
+        OverlayHideButton.IsEnabled = isVisible;
+
+        StatusText.Text = (wasVisible, isVisible) switch
+        {
+            (true, _) => "ホットキー: 訳文を消しました。もう一度押すと出し直します。",
+            (false, true) => "ホットキー: 最後の訳文を出し直しました（API は呼んでいません）。",
+            (false, false) => "ホットキー: 出し直せる訳文がありません。",
+        };
+
+        return Task.CompletedTask;
     }
 
     private void OnOverlayHideClick(object sender, RoutedEventArgs e)
