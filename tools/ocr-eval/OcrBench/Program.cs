@@ -105,11 +105,11 @@ internal static partial class Program
         var image = LoadBgra32(samplePath);
         Console.WriteLine($"=== {name}  {image.Width}x{image.Height}  "
                           + $"正解 {truthLines.Count} 行 / 数値 {truthNumbers.Count} 種 ===");
-        Console.WriteLine($"  {"設定",-20} {"一致度",6}  {"数値",7}  {"行数",5}  {"時間",7}");
+        Console.WriteLine($"  {"設定",-20} {"一致度",6}  {"数値",7}  {"余分",4}  {"行数",5}  {"時間",7}");
 
         // 数字だけでは「何を間違えたか」が分からず、P0-7 の 3 段階判定ができない。
         // 一番成績の良かった設定の認識結果を後で並べて見せる。
-        var best = (Similarity: -1.0, Config: string.Empty, Lines: (IReadOnlyList<OcrLine>)[]);
+        var best = (Similarity: -1.0, Config: string.Empty, Lines: (IReadOnlyList<OcrLine>)[], Extra: (List<string>)[]);
 
         foreach (var (configName, options) in Configurations)
         {
@@ -121,14 +121,17 @@ internal static partial class Program
 
             var similarity = Similarity(truth, recognized);
             var found = truthNumbers.Count(n => recognized.Contains(n, StringComparison.Ordinal));
+            var extra = ExtraNumbers(truthNumbers, recognized);
             var ms = result.Elapsed.TotalMilliseconds;
 
-            Console.WriteLine($"  {Mark(similarity)}{configName,-18} {similarity * 100,5:F1}%  "
-                              + $"{found,2}/{truthNumbers.Count,-4}  {result.Lines.Count,4}  {ms,5:F0}ms");
+            // 余分な数値は、一致度が高くても失敗として目立たせる（RULES.md 🟡-7）
+            var mark = extra.Count > 0 ? "★ " : Mark(similarity);
+            Console.WriteLine($"  {mark}{configName,-18} {similarity * 100,5:F1}%  "
+                              + $"{found,2}/{truthNumbers.Count,-4}  {extra.Count,4}  {result.Lines.Count,4}  {ms,5:F0}ms");
 
             if (similarity > best.Similarity)
             {
-                best = (similarity, configName, result.Lines);
+                best = (similarity, configName, result.Lines, extra);
             }
 
             var previous = totals.GetValueOrDefault(configName);
@@ -137,13 +140,27 @@ internal static partial class Program
                 Similarity = previous.Similarity + similarity,
                 NumbersFound = previous.NumbersFound + found,
                 NumbersTotal = previous.NumbersTotal + truthNumbers.Count,
+                ExtraNumbers = previous.ExtraNumbers + extra.Count,
                 Milliseconds = previous.Milliseconds + ms,
             };
         }
 
-        PrintBestRecognition(best.Config, best.Lines, truthLines);
+        PrintBestRecognition(best.Config, best.Lines, truthLines, best.Extra);
         Console.WriteLine();
     }
+
+    /// <summary>
+    /// 認識結果に現れたが、正解には無い数値。
+    /// </summary>
+    /// <remarks>
+    /// <para>「正解の数値を読めたか」だけを数えると、<b>原文に無い数値が増えた</b>ことを見逃す。
+    /// 2026-09-20、Pokémon TCG Live のデイリークエスト「Use 2 attacks from ⚡ Pokémon.」で、
+    /// 雷エネルギーのアイコン ⚡ が数字の「4」と読まれ、翻訳は「4 匹のポケモン」と訳した。
+    /// 正解の数値（2）はすべて読めていたため、従来の列では満点に見えていた。</para>
+    /// <para>RULES.md 🟡-7 の観点では、原文に無い数値は誤った数値と同じく有害。</para>
+    /// </remarks>
+    private static List<string> ExtraNumbers(IReadOnlyCollection<string> truthNumbers, string recognized) =>
+        [.. ExtractNumbers(recognized).Where(n => !truthNumbers.Contains(n))];
 
     /// <summary>
     /// 一番成績の良かった設定の認識結果を、正解と並べて出す。
@@ -154,10 +171,15 @@ internal static partial class Program
     /// 判定できる材料をここで出す（PLAN.md P0-7「計測用のログ出力」）。
     /// </remarks>
     private static void PrintBestRecognition(
-        string configName, IReadOnlyList<OcrLine> lines, IReadOnlyList<string> truthLines)
+        string configName, IReadOnlyList<OcrLine> lines, IReadOnlyList<string> truthLines,
+        List<string> extraNumbers)
     {
         Console.WriteLine();
         Console.WriteLine($"  --- 認識結果（{configName}）---");
+        if (extraNumbers.Count > 0)
+        {
+            Console.WriteLine($"  ★ 原文に無い数値: {string.Join(", ", extraNumbers)}");
+        }
 
         foreach (var line in ReadingOrder(lines))
         {
@@ -174,15 +196,20 @@ internal static partial class Program
     private static void PrintSummary(Dictionary<string, Totals> totals, int sampleCount)
     {
         Console.WriteLine($"=== 総合（{sampleCount} 枚の平均） ===");
-        Console.WriteLine($"  {"設定",-20} {"一致度",6}  {"数値",9}  {"時間",7}");
+        Console.WriteLine($"  {"設定",-20} {"一致度",6}  {"数値",9}  {"余分",4}  {"時間",7}");
 
         foreach (var (configName, sum) in totals.OrderByDescending(t => t.Value.Similarity))
         {
             var similarity = sum.Similarity / sampleCount;
-            Console.WriteLine($"  {Mark(similarity)}{configName,-18} {similarity * 100,5:F1}%  "
+            var mark = sum.ExtraNumbers > 0 ? "★ " : Mark(similarity);
+            Console.WriteLine($"  {mark}{configName,-18} {similarity * 100,5:F1}%  "
                               + $"{sum.NumbersFound,3}/{sum.NumbersTotal,-4}  "
+                              + $"{sum.ExtraNumbers,4}  "
                               + $"{sum.Milliseconds / sampleCount,5:F0}ms");
         }
+
+        Console.WriteLine();
+        Console.WriteLine("  ★ = 原文に無い数値が出た（一致度に関わらず失敗扱い。RULES.md 🟡-7）");
     }
 
     private static string TruthPathFor(string imagePath) =>
@@ -294,5 +321,5 @@ internal static partial class Program
     private static partial Regex NumberRegex();
 
     private readonly record struct Totals(
-        double Similarity, int NumbersFound, int NumbersTotal, double Milliseconds);
+        double Similarity, int NumbersFound, int NumbersTotal, int ExtraNumbers, double Milliseconds);
 }

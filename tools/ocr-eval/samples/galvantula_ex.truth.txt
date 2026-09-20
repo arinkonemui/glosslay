@@ -6,6 +6,7 @@ BATTLE PASS
 CARD DEX
 2,430
 1,895
+0
 STAGE 1
 Galvantula ex
 HP 260
