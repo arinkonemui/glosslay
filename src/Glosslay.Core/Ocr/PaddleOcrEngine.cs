@@ -131,7 +131,7 @@ public sealed class PaddleOcrEngine(PaddleOcrOptions? options = null) : IOcrEngi
             }
 
             var crop = image.Crop(box.X, box.Y, box.Width, box.Height);
-            var (text, confidence) = RecognizeLine(crop);
+            var (text, confidence, characters) = RecognizeLine(crop);
 
             // FR-OCR-06: 信頼度が閾値未満の行は捨てる。
             if (text.Length == 0 || confidence < _options.MinConfidence)
@@ -139,7 +139,7 @@ public sealed class PaddleOcrEngine(PaddleOcrOptions? options = null) : IOcrEngi
                 continue;
             }
 
-            lines.Add(new OcrLine(text, confidence, box));
+            lines.Add(new OcrLine(text, confidence, box) { Characters = characters });
         }
 
         return new OcrResult(lines, stopwatch.Elapsed);
@@ -167,7 +167,8 @@ public sealed class PaddleOcrEngine(PaddleOcrOptions? options = null) : IOcrEngi
             map.ToArray(), mapWidth, mapHeight, image.Width, image.Height);
     }
 
-    private (string Text, float Confidence) RecognizeLine(Bgra32Image crop)
+    private (string Text, float Confidence, IReadOnlyList<RecognizedCharacter> Characters)
+        RecognizeLine(Bgra32Image crop)
     {
         var width = OcrImagePreprocessor.ComputeRecognitionWidth(crop.Width, crop.Height);
         var tensorData = OcrImagePreprocessor.BuildRecognitionTensor(crop, width);

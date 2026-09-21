@@ -183,7 +183,7 @@ internal static partial class Program
 
         foreach (var line in ReadingOrder(lines))
         {
-            Console.WriteLine($"    {line.Confidence:F2}  {line.Text}");
+            Console.WriteLine($"    {line.Confidence:F2}  {WeakestCharacter(line),-12}  {line.Text}");
         }
 
         Console.WriteLine("  --- 正解 ---");
@@ -191,6 +191,37 @@ internal static partial class Program
         {
             Console.WriteLine($"          {line}");
         }
+    }
+
+    /// <summary>
+    /// 行の中で最も自信の無い 1 文字を「文字 確率」の形で返す。
+    /// </summary>
+    /// <remarks>
+    /// <para>行の平均は、正しく読めた周囲の文字に引っ張られて高いままになる。
+    /// 2026-09-21 の計測では、アイコンを「4」と誤読した行の平均は 0.97 だったが、
+    /// その「4」自体は 0.50 だった。どこが怪しいかは最小値でしか見えない。</para>
+    /// <para>ただし <b>この値でアイコンの誤読を機械的に判定することはできない。</b>
+    /// 同じ誤読が前処理を変えると 0.94 まで上がり、正常な文字は 0.39 まで下がるため、
+    /// 分布が重なる（PLAN.md 課題6 の計測）。人が結果を読むときの手がかりとして出している。</para>
+    /// </remarks>
+    private static string WeakestCharacter(OcrLine line)
+    {
+        if (line.Characters.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var weakest = line.Characters[0];
+        foreach (var character in line.Characters)
+        {
+            if (character.Confidence < weakest.Confidence)
+            {
+                weakest = character;
+            }
+        }
+
+        var text = weakest.Text == " " ? "␣" : weakest.Text;
+        return $"最小 {text} {weakest.Confidence:F2}";
     }
 
     private static void PrintSummary(Dictionary<string, Totals> totals, int sampleCount)

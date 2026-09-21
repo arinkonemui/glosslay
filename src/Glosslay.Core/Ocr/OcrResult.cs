@@ -20,7 +20,36 @@ public readonly record struct OcrBox(int X, int Y, int Width, int Height)
 /// <param name="Text">認識した文字列。</param>
 /// <param name="Confidence">信頼度 0.0〜1.0。FR-OCR-06 の閾値判定に使う。</param>
 /// <param name="Box">画像内での位置。</param>
-public sealed record OcrLine(string Text, float Confidence, OcrBox Box);
+public sealed record OcrLine(string Text, float Confidence, OcrBox Box)
+{
+    /// <summary>文字ごとの確信度。認識エンジンが出せない場合は空。</summary>
+    /// <remarks>
+    /// 計測用（PLAN.md 課題6）。<see cref="Confidence"/> は行の平均のため、
+    /// 「1 文字だけ自信がない」状態が見えない。判定には使えない（<see cref="RecognizedCharacter"/> 参照）。
+    /// </remarks>
+    public IReadOnlyList<RecognizedCharacter> Characters { get; init; } = [];
+
+    /// <summary>最も自信の無い 1 文字の確信度。文字ごとの値が無ければ <see cref="Confidence"/>。</summary>
+    /// <remarks>
+    /// <see cref="Characters"/> を走査する。行あたり数十文字のため安いが、繰り返し呼ぶなら控えること。
+    /// </remarks>
+    public float MinCharacterConfidence
+    {
+        get
+        {
+            var min = Confidence;
+            foreach (var character in Characters)
+            {
+                if (character.Confidence < min)
+                {
+                    min = character.Confidence;
+                }
+            }
+
+            return min;
+        }
+    }
+}
 
 /// <summary>1 枚分の OCR 結果。</summary>
 /// <param name="Lines">認識した行。読み順は保証しない（並べ替えは TextAggregator の仕事）。</param>

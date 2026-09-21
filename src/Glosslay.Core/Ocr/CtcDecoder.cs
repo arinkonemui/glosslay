@@ -2,6 +2,18 @@ using System.Text;
 
 namespace Glosslay.Ocr;
 
+/// <summary>認識した 1 文字と、その文字を選んだときの確率。</summary>
+/// <param name="Text">文字。辞書に BMP 外の文字が含まれるため <c>char</c> では持てない。</param>
+/// <param name="Confidence">選んだ文字の確率 0.0〜1.0。</param>
+/// <remarks>
+/// <para>行全体の平均は、正しく読めた周囲の文字に引っ張られて高いままになる。
+/// どこが怪しいかは文字ごとの値でしか見えないため、計測用に残す（PLAN.md 課題6）。</para>
+/// <para><b>この値で誤読を機械的に判定することはできない。</b>
+/// 正常な文字が 0.39 まで下がる一方、アイコンを誤読した「4」は前処理次第で 0.94 まで上がり、
+/// 分布が重なる。2026-09-21 に 13,878 文字で計測した結果。</para>
+/// </remarks>
+public readonly record struct RecognizedCharacter(string Text, float Confidence);
+
 /// <summary>
 /// 認識モデルの出力（クラスごとの確率列）を文字列へ変換する。
 /// </summary>
@@ -22,8 +34,8 @@ public sealed class CtcDecoder(CharacterSet characterSet)
     /// <param name="logits">形状 <c>[timeSteps, classCount]</c> の確率列。</param>
     /// <param name="timeSteps">時刻数。</param>
     /// <param name="classCount">クラス数。</param>
-    /// <returns>認識文字列と、採用した時刻の平均確率。</returns>
-    public (string Text, float Confidence) Decode(
+    /// <returns>認識文字列、採用した時刻の平均確率、文字ごとの確率。</returns>
+    public (string Text, float Confidence, IReadOnlyList<RecognizedCharacter> Characters) Decode(
         ReadOnlySpan<float> logits, int timeSteps, int classCount)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(timeSteps);
@@ -37,8 +49,8 @@ public sealed class CtcDecoder(CharacterSet characterSet)
         }
 
         var builder = new StringBuilder(timeSteps);
+        var characters = new List<RecognizedCharacter>(timeSteps);
         var scoreSum = 0.0;
-        var scoreCount = 0;
         var previousClass = -1;
 
         for (var t = 0; t < timeSteps; t++)
@@ -63,15 +75,15 @@ public sealed class CtcDecoder(CharacterSet characterSet)
                 if (character is not null)
                 {
                     builder.Append(character);
+                    characters.Add(new RecognizedCharacter(character, bestScore));
                     scoreSum += bestScore;
-                    scoreCount++;
                 }
             }
 
             previousClass = bestClass;
         }
 
-        var confidence = scoreCount == 0 ? 0f : (float)(scoreSum / scoreCount);
-        return (builder.ToString(), confidence);
+        var confidence = characters.Count == 0 ? 0f : (float)(scoreSum / characters.Count);
+        return (builder.ToString(), confidence, characters);
     }
 }
