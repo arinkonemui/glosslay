@@ -77,3 +77,9 @@ EnumDisplayMonitors
 GetMonitorInfoW
 DwmGetWindowAttribute
 DWMWINDOWATTRIBUTE
+
+// --- カーソル位置モード（FR-MOD-09〜14） ---
+// カーソルの周囲だけを OCR するために、押された瞬間の座標を 1 回だけ読む。
+// 位置を問い合わせるだけで、ゲームプロセスには触れない（RULES.md 🔴-1）。
+// 入力も奪わず、移動の監視もしない（🔴-3）。
+GetCursorPos

@@ -39,6 +39,16 @@ public sealed record HotkeyOptions
     /// </remarks>
     public const string DefaultToggleOverlay = "Ctrl+Shift+H";
 
+    /// <summary>
+    /// カーソルの周囲だけを翻訳するキーの既定値（FR-MOD-09〜14）。
+    /// </summary>
+    /// <remarks>
+    /// <para>C は Cursor の頭文字。覚える組み合わせを増やさないよう、修飾キーは他の 2 つと揃えている。</para>
+    /// <para>v0.5 では<b>カーソルを止めるだけで発動する方式が既定</b>になる（FR-MOD-11）。
+    /// PoC ではホットキーだけを実装し、静止判定は作っていない。</para>
+    /// </remarks>
+    public const string DefaultTranslateCursor = "Ctrl+Shift+C";
+
     /// <summary>設定ファイル名。</summary>
     public const string FileName = "hotkeys.json";
 
@@ -53,6 +63,14 @@ public sealed record HotkeyOptions
     /// 消えているときに押すと、最後の訳文を API を呼ばずに出し直す。
     /// </remarks>
     public string ToggleOverlay { get; init; } = DefaultToggleOverlay;
+
+    /// <summary>
+    /// カーソルの周囲だけを翻訳するキー（FR-MOD-09〜14）。
+    /// </summary>
+    /// <remarks>
+    /// 全画面より読む量が減るため、性能要件 1.5 秒に収まる見込みがある（PLAN.md 課題4）。
+    /// </remarks>
+    public string TranslateCursor { get; init; } = DefaultTranslateCursor;
 
     /// <summary>設定を読み込む。ファイルが無い / 壊れている場合は既定値を返す。</summary>
     public static HotkeyOptions Load() => JsonSettings.Load(FileName, () => new HotkeyOptions());

@@ -70,6 +70,8 @@ public partial class MainWindow : Window, IDisposable
     /// <summary>オーバーレイの表示を ON/OFF するキーの検出（FR-OVL-08）。</summary>
     private HotkeyDetector? _toggleHotkey;
 
+    private HotkeyDetector? _cursorHotkey;
+
     /// <summary><c>WM_INPUT</c> を受け取るためのフック先。</summary>
     private HwndSource? _hwndSource;
 
@@ -104,26 +106,15 @@ public partial class MainWindow : Window, IDisposable
         var problems = new List<string>();
 
         // 設定の誤りでアプリ全体を止めない。使えないキーだけ無効にして理由を見せる。
-        HotkeyGesture? translate = HotkeyGesture.TryParse(options.TranslateScreen, out var t) ? t : null;
-        HotkeyGesture? toggle = HotkeyGesture.TryParse(options.ToggleOverlay, out var o) ? o : null;
+        var translate = ParseGesture(options.TranslateScreen, "翻訳キー", problems);
+        var cursor = ParseGesture(options.TranslateCursor, "カーソル翻訳キー", problems);
+        var toggle = ParseGesture(options.ToggleOverlay, "ON/OFF キー", problems);
 
-        if (translate is null)
-        {
-            problems.Add($"hotkeys.json の翻訳キー「{options.TranslateScreen}」を解釈できません。");
-        }
+        // 同じ組み合わせだと、1 回押すたびに両方が走る。後に出てきた方を無効にする。
+        cursor = RejectDuplicate(cursor, [translate], "カーソル翻訳キー", problems);
+        toggle = RejectDuplicate(toggle, [translate, cursor], "ON/OFF キー", problems);
 
-        if (toggle is null)
-        {
-            problems.Add($"hotkeys.json の ON/OFF キー「{options.ToggleOverlay}」を解釈できません。");
-        }
-        else if (toggle == translate)
-        {
-            // 同じ組み合わせだと、1 回押すたびに翻訳と ON/OFF が同時に走る。
-            toggle = null;
-            problems.Add("ON/OFF キーが翻訳キーと同じ組み合わせのため、ON/OFF キーを無効にしました。");
-        }
-
-        if (translate is null && toggle is null)
+        if (translate is null && cursor is null && toggle is null)
         {
             HotkeyText.Text = "ホットキー無効: " + string.Join(" ", problems);
             return;
@@ -135,6 +126,7 @@ public partial class MainWindow : Window, IDisposable
 
         RawKeyboard.Register(handle);
         _translateHotkey = translate is { } translateGesture ? new HotkeyDetector(translateGesture) : null;
+        _cursorHotkey = cursor is { } cursorGesture ? new HotkeyDetector(cursorGesture) : null;
         _toggleHotkey = toggle is { } toggleGesture ? new HotkeyDetector(toggleGesture) : null;
 
         var descriptions = new List<string>();
@@ -143,12 +135,51 @@ public partial class MainWindow : Window, IDisposable
             descriptions.Add($"{tg} — 前面の画面を翻訳して、原文の位置に重ねる");
         }
 
+        if (cursor is { } cg)
+        {
+            descriptions.Add(
+                $"{cg} — カーソルの周囲 {CursorRegion.DefaultWidth}x{CursorRegion.DefaultHeight} だけを翻訳する");
+        }
+
         if (toggle is { } og)
         {
             descriptions.Add($"{og} — 訳文を消す / 最後の訳文を出し直す");
         }
 
         HotkeyText.Text = string.Join(Environment.NewLine, [.. descriptions, .. problems]);
+    }
+
+    /// <summary>設定の文字列を組み合わせに直す。読めなければ理由を積んで null を返す。</summary>
+    private static HotkeyGesture? ParseGesture(string text, string label, List<string> problems)
+    {
+        if (HotkeyGesture.TryParse(text, out var gesture))
+        {
+            return gesture;
+        }
+
+        problems.Add($"hotkeys.json の{label}「{text}」を解釈できません。");
+        return null;
+    }
+
+    /// <summary>既に使われている組み合わせなら無効にする。</summary>
+    private static HotkeyGesture? RejectDuplicate(
+        HotkeyGesture? gesture, ReadOnlySpan<HotkeyGesture?> taken, string label, List<string> problems)
+    {
+        if (gesture is null)
+        {
+            return null;
+        }
+
+        foreach (var other in taken)
+        {
+            if (other == gesture)
+            {
+                problems.Add($"{label}が他のキーと同じ組み合わせのため、無効にしました。");
+                return null;
+            }
+        }
+
+        return gesture;
     }
 
     /// <summary>
@@ -168,11 +199,16 @@ public partial class MainWindow : Window, IDisposable
             return 0;
         }
 
-        // 両方の検出器に同じ入力を必ず渡す。修飾キーの押下状態はそれぞれが持っているため、
-        // 片方にしか渡さないと、もう片方の Ctrl / Shift の状態がずれる。
+        // すべての検出器に同じ入力を必ず渡す。修飾キーの押下状態はそれぞれが持っているため、
+        // 一部にしか渡さないと、渡さなかった側の Ctrl / Shift の状態がずれる。
         if (_translateHotkey?.Process(virtualKey, isKeyUp) == true)
         {
             _ = RunGuardedAsync(TranslateScreenAsync);
+        }
+
+        if (_cursorHotkey?.Process(virtualKey, isKeyUp) == true)
+        {
+            _ = RunGuardedAsync(TranslateCursorAsync);
         }
 
         if (_toggleHotkey?.Process(virtualKey, isKeyUp) == true)
@@ -454,6 +490,21 @@ public partial class MainWindow : Window, IDisposable
 
         var options = BuildPreprocessOptions();
         return (ImagePreprocessor.Apply(image, options), options, offsetX, offsetY);
+    }
+
+    /// <summary>
+    /// 指定した矩形だけを切り出して OCR にかける（カーソル位置モード）。
+    /// </summary>
+    /// <remarks>
+    /// プレビュー上でドラッグした範囲（<c>_region</c>）とは別の経路。
+    /// こちらはホットキーを押した瞬間のカーソル位置から決まる。
+    /// </remarks>
+    private (Bgra32Image Image, PreprocessOptions Options, int OffsetX, int OffsetY)
+        PrepareForOcr(CapturedFrame frame, FrameRect region)
+    {
+        var image = frame.AsImage().Crop(region.X, region.Y, region.Width, region.Height);
+        var options = BuildPreprocessOptions();
+        return (ImagePreprocessor.Apply(image, options), options, region.X, region.Y);
     }
 
     /// <summary>OCR の結果を、加工後の座標から元画像の座標へ戻す。</summary>
@@ -917,7 +968,22 @@ public partial class MainWindow : Window, IDisposable
     /// <para><b>撮影を最優先にする。</b>「翻訳中…」が出た時点で撮り終えているので、
     /// そこから先はカーソルを動かしてよい。</para>
     /// </remarks>
-    private async Task TranslateScreenAsync()
+    /// <summary>前面の画面をまとめて翻訳する（FR-MOD-01）。</summary>
+    private Task TranslateScreenAsync() => TranslateAsync(useCursorWindow: false);
+
+    /// <summary>
+    /// カーソルの周囲だけを翻訳する（FR-MOD-09〜14 の最小実装）。
+    /// </summary>
+    /// <remarks>
+    /// <para>v0.5 の本実装では<b>カーソルの静止で発動する</b>のが既定になる（FR-MOD-11）。
+    /// ここではホットキーだけを用意し、静止判定・窓サイズの設定・プロファイルは作っていない
+    /// （PoC は「UI の作り込み・設定画面・プロファイルは対象外」）。</para>
+    /// <para>狙いは課題4 の計測。全画面では合計 6 秒かかっており、
+    /// 読む量を減らして 1.5 秒に入るかを実機で確かめる。</para>
+    /// </remarks>
+    private Task TranslateCursorAsync() => TranslateAsync(useCursorWindow: true);
+
+    private async Task TranslateAsync(bool useCursorWindow)
     {
         if (_isTranslatingScreen)
         {
@@ -937,6 +1003,15 @@ public partial class MainWindow : Window, IDisposable
             if (!CaptureTargetBounds.TryGet(target, out var bounds))
             {
                 StatusText.Text = $"ホットキー: {target.DisplayName} の画面上の位置を取得できませんでした。";
+                return;
+            }
+
+            // カーソルは撮る前に読む。撮影に時間がかかるため、後で読むと
+            // 「押した時に指していた場所」からずれる。
+            ScreenPoint cursor = default;
+            if (useCursorWindow && !CursorPosition.TryGet(out cursor))
+            {
+                StatusText.Text = "ホットキー: カーソルの位置を取得できませんでした。";
                 return;
             }
 
@@ -962,11 +1037,29 @@ public partial class MainWindow : Window, IDisposable
             // ここで撮り終えている。受け付けたことをゲーム画面の上で返す。
             overlay.ShowMessage("翻訳中…", bounds, frame.Width, frame.Height, keepVisibleFor);
 
-            var (image, options, _, _) = PrepareForOcr(frame, useRegion: false);
+            FrameRect? window = null;
+            if (useCursorWindow)
+            {
+                if (!CursorRegion.TryResolve(cursor, bounds, frame.Width, frame.Height, out var resolved))
+                {
+                    overlay.ShowMessage(
+                        "カーソルが対象の画面の外にあります", bounds, frame.Width, frame.Height, keepVisibleFor);
+                    StatusText.Text = $"ホットキー: カーソルが {target.DisplayName} の外にあります。";
+                    return;
+                }
+
+                window = resolved;
+            }
+
+            var (image, options, offsetX, offsetY) = window is { } region
+                ? PrepareForOcr(frame, region)
+                : PrepareForOcr(frame, useRegion: false);
+
             var ocr = await _ocrEngine.RecognizeAsync(image).ConfigureAwait(true);
 
             // 読み順に並べてから渡す。崩れた順で渡すと文脈が壊れて訳が悪くなる。
-            var lines = TextAggregator.InReadingOrder(MapToSource(ocr.Lines, options.Scale, 0, 0));
+            var lines = TextAggregator.InReadingOrder(
+                MapToSource(ocr.Lines, options.Scale, offsetX, offsetY));
             _lastOcrLines = lines;
             TranslateButton.IsEnabled = lines.Count > 0;
             PreviewImage.Source = DrawBoxes(_lastBitmap!, lines);
@@ -999,7 +1092,7 @@ public partial class MainWindow : Window, IDisposable
             }
 
             OverlayHideButton.IsEnabled = true;
-            ShowScreenTranslationReport(target, frame, lines, translated, captureMs,
+            ShowScreenTranslationReport(target, frame, window, lines, translated, captureMs,
                 ocr.Elapsed.TotalMilliseconds, total.Elapsed.TotalMilliseconds);
         }
         catch (OperationCanceledException)
@@ -1053,7 +1146,7 @@ public partial class MainWindow : Window, IDisposable
     /// 実画面で目で確かめられるようにするため。</para>
     /// </remarks>
     private void ShowScreenTranslationReport(
-        CaptureTarget target, CapturedFrame frame, List<OcrLine> source,
+        CaptureTarget target, CapturedFrame frame, FrameRect? window, List<OcrLine> source,
         LineTranslationResult translated, double captureMs, double ocrMs, double totalMs)
     {
         var translation = translated.Translation;
@@ -1072,9 +1165,14 @@ public partial class MainWindow : Window, IDisposable
 
         ResultText.Text = string.Join(Environment.NewLine,
             [
-                $"ホットキー     : 前面の画面を翻訳（FR-MOD-01）",
+                window is null
+                    ? "ホットキー     : 前面の画面を翻訳（FR-MOD-01）"
+                    : "ホットキー     : カーソルの周囲を翻訳（FR-MOD-09〜14）",
                 $"対象           : {target}",
-                $"画面           : {frame.Width}x{frame.Height}（範囲指定は使わない）",
+                window is { } w
+                    ? $"読んだ範囲     : {w.Width}x{w.Height} @ ({w.X},{w.Y})"
+                      + $" — 画面 {frame.Width}x{frame.Height} の {(double)(w.Width * w.Height) / (frame.Width * frame.Height) * 100:F0}%"
+                    : $"画面           : {frame.Width}x{frame.Height}（範囲指定は使わない）",
                 $"バックエンド   : {_translator.Name}",
                 $"状態           : {DescribeOutcome(translation)}",
                 $"検出           : {source.Count} 行",
