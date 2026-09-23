@@ -63,9 +63,12 @@ public sealed class GeminiTranslator : ITranslator
         catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             // HttpClient.Timeout による打ち切り。利用者の中断とは区別する。
+            // 「通信できない」とは言い切らない。要求は届いていて、応答が遅いだけのことがある。
             return TranslationResult.Failure(
-                TranslationOutcome.NetworkError,
-                $"Gemini の応答が {_options.Timeout.TotalSeconds:F0} 秒以内に返りませんでした。",
+                TranslationOutcome.Timeout,
+                $"Gemini が {_options.Timeout.TotalSeconds:F0} 秒以内に応答しませんでした。"
+                + " 混雑していると時間がかかることがあります。"
+                + $" 待てる場合は {GeminiOptions.FileName} の Timeout を伸ばしてください。",
                 stopwatch.Elapsed);
         }
         catch (HttpRequestException exception)
@@ -146,17 +149,29 @@ public sealed class GeminiTranslator : ITranslator
         var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
         var detail = body.Length > 300 ? body[..300] : body;
 
-        // 429 だけ分けるのは、FR-TRN-06 の「静かにフォールバック」対象であり、
-        // かつ無料枠を使い切っただけで異常ではないため。
-        return response.StatusCode == HttpStatusCode.TooManyRequests
-            ? TranslationResult.Failure(
+        // 429 と 503 を分けるのは、どちらも「こちらに直すところが無い」状態でありながら、
+        // 原因も待つべき時間も違うため。まとめて「サービスエラー」にすると原因が追えない。
+        return response.StatusCode switch
+        {
+            HttpStatusCode.TooManyRequests => TranslationResult.Failure(
                 TranslationOutcome.RateLimited,
                 "Gemini の利用上限に達しました。しばらく待つと戻ります。",
-                stopwatch.Elapsed)
-            : TranslationResult.Failure(
+                stopwatch.Elapsed),
+
+            // 503 は Google 側の混雑。2026-09-24 に無料枠で頻発した（PLAN.md 課題7）。
+            // 本文に "This model is currently experiencing high demand." が入る。
+            HttpStatusCode.ServiceUnavailable => TranslationResult.Failure(
+                TranslationOutcome.Busy,
+                "Gemini が混雑していて応答できません。"
+                + " 利用者側の問題ではなく、時間をおくと戻ります。"
+                + $" 詳細: {detail}",
+                stopwatch.Elapsed),
+
+            _ => TranslationResult.Failure(
                 TranslationOutcome.ServiceError,
                 $"Gemini がエラーを返しました（HTTP {(int)response.StatusCode}）: {detail}",
-                stopwatch.Elapsed);
+                stopwatch.Elapsed),
+        };
     }
 
     private static TranslationResult Interpret(GenerateContentResponse? payload, TimeSpan elapsed)

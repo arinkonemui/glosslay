@@ -813,7 +813,9 @@ public partial class MainWindow : Window, IDisposable
             TranslationOutcome.Succeeded => "成功",
             TranslationOutcome.NotConfigured => "キー未登録",
             TranslationOutcome.RateLimited => "利用上限（HTTP 429）",
-            TranslationOutcome.NetworkError => "通信エラー",
+            TranslationOutcome.NetworkError => "接続できない",
+            TranslationOutcome.Timeout => "応答なし（制限時間切れ）",
+            TranslationOutcome.Busy => "混雑（HTTP 503）",
             TranslationOutcome.ServiceError => "サービスエラー",
             TranslationOutcome.Blocked => "応答が拒否された",
             _ => result.Outcome.ToString(),
@@ -1125,12 +1127,21 @@ public partial class MainWindow : Window, IDisposable
         return CaptureTargetEnumerator.TryDescribe(foreground, out var target) ? target : null;
     }
 
-    /// <summary>オーバーレイに出す短い失敗理由。詳細は操作ウィンドウに出す。</summary>
+    /// <summary>
+    /// オーバーレイに出す短い失敗理由。詳細は操作ウィンドウに出す。
+    /// </summary>
+    /// <remarks>
+    /// ゲームの上に重ねるため短く保つが、<b>こちらの問題なのか相手の問題なのかは伝える。</b>
+    /// 2026-09-24、混雑による遅延を「通信できませんでした」と出していたため、
+    /// 回線を疑わせてしまった（PLAN.md 課題7）。
+    /// </remarks>
     private static string ShortOutcome(TranslationOutcome outcome) => outcome switch
     {
         TranslationOutcome.NotConfigured => "APIキーが未登録です",
         TranslationOutcome.RateLimited => "利用上限に達しました（しばらく待つと戻ります）",
-        TranslationOutcome.NetworkError => "通信できませんでした",
+        TranslationOutcome.NetworkError => "翻訳サービスに接続できませんでした",
+        TranslationOutcome.Timeout => "翻訳サービスから応答がありません（混雑している可能性）",
+        TranslationOutcome.Busy => "翻訳サービスが混雑しています（時間をおくと戻ります）",
         TranslationOutcome.ServiceError => "翻訳サービスがエラーを返しました",
         TranslationOutcome.Blocked => "翻訳が拒否されました",
         _ => outcome.ToString(),

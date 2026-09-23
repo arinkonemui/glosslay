@@ -29,8 +29,27 @@ public enum TranslationOutcome
     /// <summary>レート上限（HTTP 429）。無料枠を使い切った場合もここ。</summary>
     RateLimited,
 
-    /// <summary>通信できない・タイムアウト。</summary>
+    /// <summary>接続できない。回線・DNS・プロキシなど、要求が相手に届かなかった場合。</summary>
     NetworkError,
+
+    /// <summary>
+    /// 制限時間内に応答が返らなかった。
+    /// </summary>
+    /// <remarks>
+    /// <see cref="NetworkError"/> と分けているのは、<b>原因が違い、利用者が取る行動も違う</b>ため。
+    /// 届いていないのか、届いたうえで遅いのかを混ぜると原因が追えない
+    /// （2026-09-24、混雑による遅延を「通信できませんでした」と表示して切り分けに手間取った。PLAN.md 課題7）。
+    /// </remarks>
+    Timeout,
+
+    /// <summary>
+    /// 混雑していて今は応答できない（HTTP 503）。
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ServiceError"/> と分けているのは、<b>こちらに直すところが無い</b>ため。
+    /// モデル名の誤りなら設定を直すが、混雑は待つか別の手段へ切り替えるしかない。
+    /// </remarks>
+    Busy,
 
     /// <summary>サービス側のエラー。モデル名の誤りやキーの失効もここに含む。</summary>
     ServiceError,
@@ -73,6 +92,8 @@ public sealed record TranslationResult(string Text, TranslationOutcome Outcome, 
     public bool ShouldFallBack => Outcome
         is TranslationOutcome.RateLimited
         or TranslationOutcome.NetworkError
+        or TranslationOutcome.Timeout
+        or TranslationOutcome.Busy
         or TranslationOutcome.ServiceError;
 
     internal static TranslationResult Failure(
