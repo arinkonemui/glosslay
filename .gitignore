@@ -79,3 +79,7 @@ TestResults/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# --- ローカルNMT の変換ツール（tools/nmt-convert）---
+# 変換したモデルは派生物でサイズも大きい。配布物としてリリースに添付する
+tools/nmt-convert/out/

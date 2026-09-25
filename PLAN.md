@@ -1154,7 +1154,7 @@ Glosslay のキャプチャ経路を通っていない（H.264 で圧縮され�
 - [ ] PaddleOCR の .NET 連携方式
 - [ ] 前処理の既定値（拡大倍率など）
 - [ ] 対応言語の初期セット
-- [ ] ローカルNMTの具体的なモデル選定（Opus-MT系のどれか）
+- [x] ローカルNMTの具体的なモデル選定 — 2026-09-26 に候補を調査（下記「ローカルNMT の調査」）。**最終決定は未**
 
 ---
 
@@ -1171,6 +1171,7 @@ Glosslay のキャプチャ経路を通っていない（H.264 で圧縮され�
 - [ ] プロファイル（対象ゲーム・領域・言語・表示設定・**前処理設定**）
 - [ ] プロセス名によるプロファイル自動適用
 - [ ] Raw Input によるホットキー（**キーをゲームに流すこと**）— **画面翻訳の 1 本は PoC で前倒し済み**（2026-09-17）。残りは複数キーの割当と設定 UI
+- [ ] **`IInputTrigger` を作る**（RULES.md 🟡-2 が求める 6 インターフェースのうち、これだけ未作成）
 - [ ] Windows.Gaming.Input によるゲームパッド対応（**読み取りのみ**）
 - [ ] トリガー方式3種（未使用ボタン単押し / 同時押し / 長押し）
 - [ ] 設定UI
@@ -1719,6 +1720,185 @@ OcrBench は**製品の `TextAggregator` ではなく、旧来の行ベースの
 - 直すなら、製品と同じ `TextAggregator` を通すか、連結せず**行の集合として突き合わせる**
 
 **過去の一致度がすべて変わるため、人間の判断を仰ぐこと。**
+
+---
+
+### ローカルNMT の調査（2026-09-26）
+
+**結論: 61M 程度の小型モデルで足りる。配布サイズの心配はほぼ無い。**
+
+#### モデル候補（英→日。出典は ElanMT のモデルカードの比較表）
+
+| モデル | Params | FLORES+ BLEU | NTREX BLEU | ライセンス |
+|---|---|---|---|---|
+| `staka/fugumt-en-ja` | **61M** | **30.89** | 24.74 | CC BY-SA 4.0 |
+| `Mitsua/elan-mt-bt-en-ja` | **61M** | 29.96 | **25.63** | CC BY-SA 4.0 |
+| `Mitsua/elan-mt-tiny` | 15M | 25.93 | 22.78 | CC BY-SA 4.0 |
+| `facebook/mbart-large-50-many-to-many-mmt` | 610M | 26.31 | 23.35 | 未確認 |
+| `facebook/nllb-200-distilled-600M` | 615M | **17.09** | 14.92 | **CC-BY-NC（使用不可）** |
+| `facebook/nllb-200-3.3B` | 3B | 20.04 | 17.07 | **CC-BY-NC（使用不可）** |
+| `google/madlad400-3b-mt` | 3B | 24.62 | 23.64 | Apache 2.0 |
+| `google/madlad400-7b-mt` | 7B | 25.57 | 24.60 | Apache 2.0 |
+
+**判明した 2 点**
+
+1. **61M のモデルが 3B・7B を上回る。** 英日に特化した小型モデルで十分で、
+   int8 量子化なら **60〜70MB 程度**の見込み。FR-TRN-03 のオンデマンド DL と噛み合う
+2. **NLLB は CC-BY-NC で使えない。** サブスクのある製品ではライセンス違反。**しかも品質も最下位**
+
+> 比較表は ElanMT 自身のモデルカード掲載だが、**競合の FuguMT に FLORES+ で負けている数字を
+> そのまま載せている**ため、極端な自己有利化はしていないと判断した。
+
+#### 中国語→日本語
+
+| モデル | Params | BLEU | ライセンス |
+|---|---|---|---|
+| `Helsinki-NLP/opus-mt-tc-big-zh-ja` | 0.2B | 24.6（tatoeba zho-jpn） | CC BY-4.0 |
+
+#### トークナイザ
+
+**`Microsoft.ML.Tokenizers`**（Microsoft 発行・Prefix Reserved・.NET Standard 2.0）。
+
+- `SentencePieceTokenizer` があり、実装に `SentencePieceBpeModel.cs` と
+  **`SentencePieceUnigramModel.cs` の両方**が存在する（Marian は Unigram 方式）
+- **ネイティブ DLL なしのマネージド実装。** RULES.md 🔴-2（AV 誤検知）と 🔵（配布サイズ）に有利
+- **新規の NuGet 依存はこれ 1 つで済む見込み**（RULES.md 🔵 の相談対象）
+
+#### トークナイザの実機検証（2026-09-26・完了）
+
+**`Microsoft.ML.Tokenizers` 2.0.0（安定版）で Marian の `.spm` を読めることを確認した。**
+検証には `Mitsua/elan-mt-bt-en-ja` の `source.spm` と `vocab.json` を使った。
+
+**そのままでは落ちる。**
+
+```
+System.IndexOutOfRangeException
+  at SentencePieceUnigramModel..ctor(ModelProto, Boolean addBos, Boolean addEos, ...)
+```
+
+原因は `trainer_spec` の **`bos_id = -1`**（Marian は BOS を持たない）。
+ライブラリが BOS の存在を前提にしている。実測した `trainer_spec` は次のとおり。
+
+| 項目 | 値 | 既定値 |
+|---|---|---|
+| model_type | **1（Unigram）** | — |
+| unk_id | 1 | 0 |
+| **bos_id** | **-1** | 1 |
+| eos_id | 0 | 2 |
+| pad_id | 32000 | -1 |
+
+**回避策（検証済み）**
+
+1. 同梱する `.spm` の `bos_id` を **-1 → 0 に書き換える**。
+   varint の `-1` は 10 バイト、`0` も冗長表現で 10 バイトに書けるため、
+   **ファイル長を変えずにその場で置換できる**（長さ接頭辞の作り直しが不要）
+2. `SentencePieceTokenizer.Create(stream, addBeginningOfSentence: false, addEndOfSentence: true)` で読む
+
+この 2 点で、**分割した片が全て `vocab.json` で引けることを確認した。**
+
+```
+原文 : You are burning in slow motion. Under 60 atmospheres of pressure,
+分割 : ▁You / ▁are / ▁burning / ▁in / ▁slow / ▁motion / . / ▁Under / ▁60 / ▁atmosphere / s / …
+片数 : 15   vocab.json に無い片: 0
+```
+
+> **`▁60` が 1 つの片として保たれる。** 数値が分割されないのは RULES.md 🟡-7 の観点で好ましい。
+
+> **Marian は spm で「分割」だけを行い、id は `vocab.json` で引く。**
+> `EncodeToIds` の id をそのまま使ってはいけない。`EncodeToTokens` で片を取り、
+> `vocab.json` の辞書で id に直すこと。
+
+**書き換えた `.spm` は CC BY-SA 4.0 の派生物になる。** 同ライセンスでの公開と帰属表示が要る。
+書き換え手順はビルド時のスクリプトとして再現可能な形で残すこと。
+
+#### 依存関係の増加（RULES.md 🔵 の相談対象）
+
+| パッケージ | 種別 | DLL サイズ |
+|---|---|---|
+| `Microsoft.ML.Tokenizers` 2.0.0 | 直接 | 318 KB |
+| `Google.Protobuf` 3.30.2 | **推移的**（`.spm` は protobuf のため） | 478 KB |
+
+**合計 約 800KB。どちらもマネージド実装でネイティブ DLL を持たない。**
+配布サイズ（モデル同梱で 200MB 程度まで許容）に対して無視できる大きさで、
+AV 誤検知の観点（RULES.md 🔴-2）でもネイティブを増やさない点が有利。
+
+#### ONNX 変換と int8 量子化（2026-09-26・完了）
+
+`Mitsua/elan-mt-bt-en-ja` を `tools/nmt-convert` で変換した。
+
+| ファイル | fp32 | **int8** |
+|---|---|---|
+| `encoder_model.onnx` | 135.7 MB | **34.2 MB** |
+| `decoder_model.onnx` | 222.5 MB | **56.2 MB** |
+| `decoder_with_past_model.onnx` | 210.5 MB | **53.1 MB** |
+| **合計**（`.spm` / `vocab.json` を含む） | **571.1 MB** | **145.8 MB** |
+
+**`decoder_model_merged.onnx` は使えない。** 復号器が 2 つあるのは無駄に見えるが、
+**マージ版は動的量子化が効かない**（222.7 MB → 222.9 MB）。分岐を含むグラフの
+サブグラフまで `quantize_dynamic` が入らないため。**分割版のまま採用する。**
+
+> 将来の削減案: `decoder_with_past_model.onnx` だけを積み、最初の 1 手も
+> 長さ 0 の past を渡して通せれば **約 90MB** まで落とせる。
+> グラフが長さ 0 の past を受け付けるかは C# の復号ループを書くときに確かめること。
+
+**FR-TRN-03 はオンデマンド DL のため、この 146MB はインストーラのサイズではない。**
+
+#### 速度の実測（2026-09-26）— 課題4 の答え
+
+**ローカルNMT なら性能要件 1.5 秒に収まる。**
+
+| 内容 | 2 スレッド | 4 スレッド |
+|---|---|---|
+| 短い 2 行 | 21 ms | 24 ms |
+| **カード 1 画面 15 行** | **326 ms** | **293 ms** |
+| 長文 7 行（Subnautica の NOA ログ） | 186 ms | 167 ms |
+| カード 1 画面 15 行（ビーム 4） | 1199 ms | 1019 ms |
+
+モデルの読み込みは 0.7 秒（起動時に一度だけ。FR-OCR-08 と同じく非同期ロードにする）。
+
+**クラウド翻訳との比較**
+
+| 経路 | 翻訳の所要時間 |
+|---|---|
+| Gemini（全画面 30 行） | 1849 ms。**混雑時は 40〜60 秒**（課題7） |
+| **ローカルNMT（15 行）** | **293 ms** |
+
+**工程を足した見込み**
+
+| 経路 | 撮影 | OCR | 翻訳 | 合計 |
+|---|---|---|---|---|
+| **カーソル窓 640x480** | 290 ms | 551 ms | 293 ms | **約 1134 ms → 収まる** |
+| 全画面 1920x1080 | 290 ms | 1648〜2119 ms | 293 ms | 約 2231〜2702 ms → 超過 |
+
+**カーソル位置モードなら 1.5 秒に収まる見込みが立った。**
+全画面はなお超過するが、Gemini 前提の約 6 秒からは大幅に改善する。
+
+> **ビーム幅は 3〜4 倍効く。** Marian の既定は `num_beams=4` だが、
+> 貪欲（ビーム 1）なら 15 行 293ms、ビーム 4 なら 1019ms。
+> **設定値にして実測で選べるようにすること。**
+
+**訳文の質（参考）**
+
+| 原文 | 訳文 |
+|---|---|
+| Attack Power | 攻撃力 |
+| Under 60 atmospheres of pressure, | 圧力の60気圧以下。（**誤訳**。ただし数値 60 は保たれている） |
+
+61M のモデルとしては想定どおり。**Gemini より明らかに落ちる**が、
+「APIキー無しでも動く」ための既定として成立する水準。
+精度を上げたい人がクラウドへ上げる、という RULES.md 🟡-1 の構図と合う。
+
+
+#### 残る確認事項
+
+
+- [x] ONNX 変換（optimum）と int8 量子化後のサイズ・速度・品質 — 上記のとおり完了
+- [x] **課題4 の再計測** — 上記のとおり完了。**カーソル窓なら 1.5 秒に収まる見込み**
+- [ ] CC BY-SA 4.0 の扱い — **量子化したモデルは派生物になりうる。同ライセンスでの公開と帰属表示が要る**
+
+**モデルの最終決定は未。** スコア差は誤差の範囲のため、決め手は法務。
+`Mitsua/elan-mt-bt-en-ja` は「**CC0 / CC BY / CC BY-SA のコーパスのみでゼロから学習**」を明示しており、
+再配布する製品としては最も安全。
 
 ---
 

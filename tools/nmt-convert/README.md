@@ -1,0 +1,69 @@
+# tools/nmt-convert — ローカルNMT モデルの変換
+
+ローカルNMT（FR-TRN-02 / RULES.md 🟡-1 の**既定バックエンド**）のモデルを、
+配布できる形（ONNX + int8）に変換するための道具。
+
+> **ここは変換専用です。製品（`Glosslay.App` / `Glosslay.Core`）は Python に依存しません。**
+> 製品側は ONNX Runtime でモデルを直接実行します（OCR と同じ方針）。
+
+---
+
+## セットアップ
+
+仮想環境は `.gitignore` で除外しているため、各自で作成してください。
+
+```bash
+py -m venv .venv
+./.venv/Scripts/python.exe -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+./.venv/Scripts/python.exe -m pip install "optimum[onnxruntime]" transformers sentencepiece
+```
+
+`torch` は**変換のときだけ**必要です。CPU 版で足ります。
+
+---
+
+## 使い方
+
+```bash
+./.venv/Scripts/python.exe convert.py Mitsua/elan-mt-bt-en-ja out/elan-en-ja
+```
+
+`out/elan-en-ja/int8/` に、配布する一式（ONNX・`.spm`・`vocab.json`）が出ます。
+
+---
+
+## `.spm` の書き換えについて
+
+**Marian のモデルは BOS を持たず `bos_id = -1` になっており、そのままでは
+`Microsoft.ML.Tokenizers` が `IndexOutOfRangeException` で落ちます。**
+
+`convert.py` は `patch_spm.py` を呼んで `bos_id` を `0` に書き換えます。
+varint の `-1` は 10 バイト、`0` も冗長表現で 10 バイトに書けるため、
+**ファイル長を変えずにその場で置換できます**（長さ接頭辞の作り直しが不要）。
+
+読み込む側は必ずこう指定してください。
+
+```csharp
+SentencePieceTokenizer.Create(stream, addBeginningOfSentence: false, addEndOfSentence: true);
+```
+
+### id の引き方に注意
+
+**Marian は `.spm` で「分割」だけを行い、id は `vocab.json` で引きます。**
+`EncodeToIds` が返す id をそのまま使うと別物になります。
+`EncodeToTokens` で片を取り出し、`vocab.json` の辞書で id に直してください。
+
+---
+
+## ライセンス
+
+**変換したモデルは元モデルの派生物です。** 配布時は元のライセンスに従ってください。
+
+| モデル | ライセンス | 備考 |
+|---|---|---|
+| `Mitsua/elan-mt-bt-en-ja` | **CC BY-SA 4.0** | 帰属表示と**同ライセンスでの公開**が要る |
+| `staka/fugumt-en-ja` | **CC BY-SA 4.0** | 同上 |
+| `Helsinki-NLP/opus-mt-tc-big-zh-ja` | CC BY-4.0 | 帰属表示が要る |
+| `facebook/nllb-200-*` | **CC-BY-NC** | **非商用。使用不可** |
+
+**書き換えた `.spm` と量子化した ONNX も派生物**にあたります。
