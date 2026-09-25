@@ -1,0 +1,34 @@
+HOME
+DECKS
+PROFILE
+SHOP
+BATTLE PASS
+CARD DEX
+3,530
+2,755
+0
+STAGE 1
+Flareon ex
+HP 270
+Evolves from Eevee
+Tera
+As long as this Pokémon is on your Bench, prevent all damage done to this
+Pokémon by attacks (both yours and your opponent's).
+Burning Charge
+130
+Search your deck for up to 2 Basic Energy cards and attach
+them to 1 of your Pokémon. Then, shuffle your deck.
+Carnelian
+280
+During your next turn, this Pokémon can't attack.
+weakness
+×2
+resistance
+retreat
+Pokémon ex rule
+When your Pokémon ex
+is Knocked Out, your opponent takes 2 Prize cards.
+Illus. 5ban Graphics
+PRE EN
+014/131
+©2025 Pokémon / Nintendo / Creatures / GAME FREAK

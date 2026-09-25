@@ -1,0 +1,20 @@
+Adaptation
+Biolock
+NOA
+LIMITED ACCESS
+ACTIVATED
+NoeticAdvisorShell 2.4.1
+cpimg noa_3.4.img /dev/pda/
+You are burning in slow motion. Under 60 atmospheres of pressure,
+oxygen becomes a neurotoxin. Nitrogen bubbles saturate your flesh and
+pry your joints apart.
+I've opened the door to the adaptation chamber. Your printed body can
+borrow tricks from indigenous life. You'll feel better. You'll be better.
+The last pioneer didn't make it to the lifepod. I'm activating their blackbox
+signal. You will make it. That's why you're the QI.
+CLOSE ( ESC )
+SKIP (
+SELECT (
+O₂
+0
+0.1.2.2-128456 (119691)

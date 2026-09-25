@@ -1,0 +1,27 @@
+INVENTORY
+BLUEPRINTS
+SIGNALS
+LOGS
+DATABANK
+ADAPTATIONS
+ADAPTATIONS
+PRESSURE TOLERANCE
+Highly pressurized air is destroying
+your lungs. Adaptation required.
+???
+Unknown Genetic Incompatibility
+???
+Unknown Genetic Incompatibility
+???
+Unknown Genetic Incompatibility
+???
+Unknown Genetic Incompatibility
+???
+Unknown Genetic Incompatibility
+CLOSE ( ESC )
+96
+100
+100
+O₂
+0
+0.1.2.2-128456 (119691)
