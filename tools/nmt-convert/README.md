@@ -80,3 +80,25 @@ SentencePieceTokenizer.Create(stream, addBeginningOfSentence: false, addEndOfSen
 | `facebook/nllb-200-*` | **CC-BY-NC** | **非商用。使用不可** |
 
 **書き換えた `.spm` と量子化した ONNX も派生物**にあたります。
+
+### 配布時に必ず書くこと（CC BY-SA 4.0 §3(a) の逐語要件）
+
+ライセンス本文が挙げている項目。**1 つでも欠けると条件違反**になる。
+
+- [ ] 作成者の表示 — **ELAN MITSUA Project / Abstract Engine**
+- [ ] 著作権表示
+- [ ] このライセンスを指す表示 — **CC BY-SA 4.0**
+- [ ] 免責（無保証）を指す表示
+- [ ] 元データへの URI — `https://huggingface.co/Mitsua/elan-mt-bt-en-ja`
+- [ ] **改変したことの明示** — 「ONNX へ変換し int8 量子化」「`.spm` の `bos_id` を書き換え」
+- [ ] ライセンス本文または URI の同梱
+
+さらに §3(b)（ShareAlike）より:
+
+- [ ] **量子化したモデルを CC BY-SA 4.0（または同等）で公開する**
+- [ ] そのライセンスの本文か URI を添える
+- [ ] **技術的保護手段でモデルの利用を制限しない**
+
+> **アプリ本体のソース公開は不要。** モデルは改変せず**並べて配る**だけであり、
+> アプリはモデルの派生物にあたらない。**モデルは実行ファイルに埋め込まず、
+> 別ファイルとして配ること**（この立場を明確に保つため）。
