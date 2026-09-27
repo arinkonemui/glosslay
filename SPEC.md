@@ -49,7 +49,9 @@ C:\Users\arink\source\99.Cloude資料\009_ゲーム翻訳アプリ\01.要件定�
      ↓
 [IOcrEngine]     PaddleOcrEngine（既定） / WindowsOcrEngine（高速モード・フォールバック）
      ↓ text + bbox
-[TextAggregator] 行結合 / ノイズ除去 / キャッシュ判定
+[TextAggregator] 読み順の再構成 / ノイズ除去 / キャッシュ判定
+     ↓
+[LineJoiner]     行結合（FR-TRN-10）— 切れた文を 1 つに戻す
      ↓
 [ITranslator]    LocalNmtTranslator（既定） / GeminiTranslator / OpenAiCompatibleTranslator
      ↓            └ 429・ネットワークエラー時は LocalNmtTranslator へ自動フォールバック
@@ -118,7 +120,7 @@ C:\Users\arink\source\99.Cloude資料\009_ゲーム翻訳アプリ\01.要件定�
 | FR-TRN-07 | **クラウドLLMのモデル名は設定値で保持し `IRemoteConfig` で更新可能**（ハードコード禁止） |
 | FR-TRN-08 | **原文の数値を抽出し訳文と照合。不一致なら警告または原文併記** |
 | FR-TRN-09 | 同一原文の翻訳結果をキャッシュする |
-| FR-TRN-10 | OCRの行分割で切れた文を結合してから翻訳する |
+| FR-TRN-10 | OCRの行分割で切れた文を結合してから翻訳する（**横に割れた箱・縦の折り返しの両方**） |
 | FR-TRN-11 | 用語集を登録し翻訳に反映（LLM使用時はプロンプトに載せる） |
 | FR-TRN-12 | 当月のAPI使用量と概算費用を表示する |
 | FR-TRN-13 | 翻訳モードのバッジを小さく表示（**トグルで非表示可**） |

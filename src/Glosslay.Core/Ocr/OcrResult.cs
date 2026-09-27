@@ -22,6 +22,16 @@ public readonly record struct OcrBox(int X, int Y, int Width, int Height)
 /// <param name="Box">画像内での位置。</param>
 public sealed record OcrLine(string Text, float Confidence, OcrBox Box)
 {
+    /// <summary>この行がもとの OCR の何行を結合したものか（FR-TRN-10）。結合していなければ 1。</summary>
+    /// <remarks>
+    /// <para>結合した行の <c>Box</c> は元の行すべてを囲む矩形になるため、
+    /// <b>高さだけを見ると文字が実際の何倍も大きいと誤解する。</b>
+    /// オーバーレイは文字の大きさをこの値で割って求め、枠の幅で折り返す
+    /// （<c>OverlayWindow.CreateLabel</c>）。</para>
+    /// <para>結合そのものは <c>LineJoiner</c> が行う。</para>
+    /// </remarks>
+    public int SourceLineCount { get; init; } = 1;
+
     /// <summary>文字ごとの確信度。認識エンジンが出せない場合は空。</summary>
     /// <remarks>
     /// 計測用（PLAN.md 課題6）。<see cref="Confidence"/> は行の平均のため、

@@ -131,6 +131,18 @@ dotnet run --project tools/ocr-eval/OcrBench
 dotnet run --project tools/ocr-eval/OcrBench -- <サンプルのディレクトリ> <モデルのディレクトリ>
 ```
 
+3 つ目の引数を渡すと、**最良の設定の認識結果を箱の座標つきで TSV に落とします。**
+
+```bash
+dotnet run --project tools/ocr-eval/OcrBench -- tools/ocr-eval/samples tools/ocr-eval/models "$TEMP/joinlab"
+```
+
+**行結合（FR-TRN-10）のしきい値を決めるための計測用。** OCR は 20 枚 11 設定で 10 分を超えるため、
+一度落としておけば結合の条件を何度変えても OCR を回し直さずに試せます。
+列は `x y w h conf text`、並びは `TextAggregator.InReadingOrder`（製品が翻訳へ渡す並び）です。
+
+> **TSV はゲーム画面の認識結果なのでコミットしません。** 一時ディレクトリに出してください。
+
 出力は、設定ごとの **一致度**（編集距離ベース）、**数値の正解数**、**余分な数値**、検出行数、処理時間です。
 数値は RULES.md が最重視するため個別に数えています。
 
@@ -149,6 +161,24 @@ dotnet run --project tools/ocr-eval/OcrBench -- <サンプルのディレクト�
 > **「最小」で誤読を機械的に判定することはできません。** 正常な文字が 0.39 まで下がる一方、
 > アイコンを誤読した「4」は前処理次第で 0.94 まで上がり、分布が重なります（PLAN.md 課題6 の計測）。
 > 人が結果を読むときの手がかりとして出しています。
+
+続いて、**翻訳に渡す形（行結合の後）**を出します。FR-TRN-10 の効き方を実画面で確かめるためです。
+
+```
+--- 行結合後（FR-TRN-10）20 行 → 16 件 / うち結合 3 件 ---
+      DATABANK
+  ⤵2  Highly pressurized air is destroying your lungs. Adaptation required.
+    - 96
+     ⤵n = n 行を結合 / - = 翻訳に回さない（数値・記号だけ）
+```
+
+**見るのは「繋ぎすぎ」です。** 繋ぎ落としは訳が悪くなるだけですが、繋ぎすぎは
+無関係な文が 1 つの訳になり、**オーバーレイの枠も一体化して画面を広く覆います。**
+見出しと説明文、メニュー項目どうしが 1 件になっていないかを確かめてください。
+
+> 一致度の計算はこのファイル内の別の並べ方（`ReadingOrder`）を使っており、
+> **行結合の表示だけ `TextAggregator.InReadingOrder`** を通します。
+> 一致度側を変えると過去の数値と比べられなくなるため触っていません。
 
 ## 既知の落とし穴
 

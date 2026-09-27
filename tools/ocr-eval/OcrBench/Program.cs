@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -5,6 +6,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Glosslay.Imaging;
 using Glosslay.Ocr;
+using Glosslay.Translation;
 
 namespace Glosslay.Bench;
 
@@ -47,6 +49,14 @@ internal static partial class Program
             ? args[1]
             : Path.GetFullPath(Path.Combine(sampleDirectory, "..", "models"));
 
+        // 3 つ目の引数を渡すと、最良の設定の認識結果を箱の座標つきで TSV に落とす。
+        // 行結合（FR-TRN-10）のしきい値を決めるための計測用。OCR を回さずに何度でも試せる。
+        var dumpDirectory = args.Length > 2 ? Path.GetFullPath(args[2]) : null;
+        if (dumpDirectory is not null)
+        {
+            Directory.CreateDirectory(dumpDirectory);
+        }
+
         if (!Directory.Exists(sampleDirectory))
         {
             Console.WriteLine($"サンプルのディレクトリがありません: {sampleDirectory}");
@@ -84,7 +94,7 @@ internal static partial class Program
 
         foreach (var samplePath in samples)
         {
-            await MeasureAsync(engine, samplePath, totals).ConfigureAwait(false);
+            await MeasureAsync(engine, samplePath, totals, dumpDirectory).ConfigureAwait(false);
         }
 
         PrintSummary(totals, samples.Count);
@@ -92,7 +102,8 @@ internal static partial class Program
     }
 
     private static async Task MeasureAsync(
-        PaddleOcrEngine engine, string samplePath, Dictionary<string, Totals> totals)
+        PaddleOcrEngine engine, string samplePath, Dictionary<string, Totals> totals,
+        string? dumpDirectory)
     {
         var name = Path.GetFileNameWithoutExtension(samplePath);
         var truthLines = (await File.ReadAllLinesAsync(TruthPathFor(samplePath), Encoding.UTF8)
@@ -146,6 +157,12 @@ internal static partial class Program
         }
 
         PrintBestRecognition(best.Config, best.Lines, truthLines, best.Extra);
+
+        if (dumpDirectory is not null)
+        {
+            await DumpBoxesAsync(Path.Combine(dumpDirectory, name + ".tsv"), best.Lines).ConfigureAwait(false);
+        }
+
         Console.WriteLine();
     }
 
@@ -191,6 +208,39 @@ internal static partial class Program
         {
             Console.WriteLine($"          {line}");
         }
+
+        PrintJoined(lines);
+    }
+
+    /// <summary>
+    /// 翻訳に渡す形（行結合の後）を出す。
+    /// </summary>
+    /// <remarks>
+    /// <para>FR-TRN-10 の結果を実画面で確かめるため。<b>繋ぎすぎは繋ぎ落としより害が大きい</b>
+    /// （無関係な文が 1 つの訳になり、オーバーレイの枠も一体化する）ので、
+    /// 何行が 1 つになったかを目で見られるようにする。</para>
+    /// <para>ここだけ <c>TextAggregator.InReadingOrder</c> を使う。
+    /// 上の一致度は別の並べ方（このファイルの <c>ReadingOrder</c>）で測っており、
+    /// そちらを変えると過去の数値と比べられなくなるため触らない。
+    /// <b>製品が翻訳に渡すのは TextAggregator の並び</b>なので、結合はその並びで見る必要がある。</para>
+    /// </remarks>
+    private static void PrintJoined(IReadOnlyList<OcrLine> lines)
+    {
+        var ordered = TextAggregator.InReadingOrder(lines);
+        var blocks = LineJoiner.Join(ordered);
+        var joined = blocks.Count(b => b.SourceLineCount > 1);
+
+        Console.WriteLine($"  --- 行結合後（FR-TRN-10）{ordered.Count} 行 → {blocks.Count} 件"
+                          + $" / うち結合 {joined} 件 ---");
+
+        foreach (var block in blocks)
+        {
+            var mark = block.SourceLineCount > 1 ? $"⤵{block.SourceLineCount}" : "  ";
+            var sent = LineTranslation.NeedsTranslation(block.Text) ? " " : "-";
+            Console.WriteLine($"    {mark}{sent} {block.Text}");
+        }
+
+        Console.WriteLine("       ⤵n = n 行を結合 / - = 翻訳に回さない（数値・記号だけ）");
     }
 
     /// <summary>
@@ -241,6 +291,28 @@ internal static partial class Program
 
         Console.WriteLine();
         Console.WriteLine("  ★ = 原文に無い数値が出た（一致度に関わらず失敗扱い。RULES.md 🟡-7）");
+    }
+
+    /// <summary>
+    /// 認識結果を箱の座標つきで TSV に落とす。
+    /// </summary>
+    /// <remarks>
+    /// <para>行結合（FR-TRN-10）のしきい値を、勘ではなく実測から決めるための道具。
+    /// OCR は 1 枚あたり数秒かかり、20 枚 11 設定で 10 分を超える。
+    /// <b>一度落としておけば、結合の条件を何度変えても OCR を回し直さずに試せる。</b></para>
+    /// <para>並びは <c>TextAggregator.InReadingOrder</c>。製品が翻訳へ渡す並びと同じにしてある。</para>
+    /// </remarks>
+    private static async Task DumpBoxesAsync(string path, IReadOnlyList<OcrLine> lines)
+    {
+        var builder = new StringBuilder("x\ty\tw\th\tconf\ttext\n");
+        foreach (var line in TextAggregator.InReadingOrder(lines))
+        {
+            var box = line.Box;
+            builder.Append(CultureInfo.InvariantCulture,
+                $"{box.X}\t{box.Y}\t{box.Width}\t{box.Height}\t{line.Confidence:F4}\t{line.Text}\n");
+        }
+
+        await File.WriteAllTextAsync(path, builder.ToString(), Encoding.UTF8).ConfigureAwait(false);
     }
 
     private static string TruthPathFor(string imagePath) =>

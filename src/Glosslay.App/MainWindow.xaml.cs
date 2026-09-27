@@ -763,11 +763,11 @@ public partial class MainWindow : Window, IDisposable
             return;
         }
 
-        // 読み順に並べ、改行で繋いで 1 回の呼び出しにまとめる。
-        // FR-TRN-10 の「行分割で切れた文の結合」は未実装（PoC の範囲外）。
+        // 読み順に並べ、切れた文を繋ぎ（FR-TRN-10）、改行で繋いで 1 回の呼び出しにまとめる。
         // 行をまとめず 1 行ずつ投げると呼び出し回数が行数倍になり、RULES.md 🟡-8 に反する。
         var source = string.Join(
-            Environment.NewLine, TextAggregator.InReadingOrder(_lastOcrLines).Select(line => line.Text));
+            Environment.NewLine,
+            LineJoiner.Join(TextAggregator.InReadingOrder(_lastOcrLines)).Select(line => line.Text));
 
         TranslateButton.IsEnabled = false;
         StatusText.Text = "翻訳中…";
@@ -900,7 +900,12 @@ public partial class MainWindow : Window, IDisposable
             StatusText.Text = "OCR 実行中…";
             var (image, options, offsetX, offsetY) = PrepareForOcr(frame);
             var result = await _ocrEngine.RecognizeAsync(image).ConfigureAwait(true);
-            var lines = MapToSource(result.Lines, options.Scale, offsetX, offsetY);
+
+            // 翻訳と同じ単位（読み順 → 行結合）で重ねる。
+            // ここだけ生の OCR 行を重ねていると、札の大きさや折り返しを確かめたいときに
+            // 本番と違うものを見ることになる。API を呼ばずに見た目を確認できる唯一の経路。
+            var detected = MapToSource(result.Lines, options.Scale, offsetX, offsetY);
+            var lines = LineJoiner.Join(TextAggregator.InReadingOrder(detected));
 
             var overlay = EnsureOverlay();
 
@@ -919,7 +924,8 @@ public partial class MainWindow : Window, IDisposable
             ResultText.Text = string.Join(Environment.NewLine,
                 $"重ねた先       : {bounds.X},{bounds.Y} {bounds.Width}x{bounds.Height}（物理px）",
                 $"認識画像       : {frame.Width}x{frame.Height}（このボタンで撮り直したもの）",
-                $"表示した行     : {lines.Count}",
+                $"表示した       : {detected.Count} 行 → {lines.Count} 件"
+                    + $"（{lines.Count(l => l.SourceLineCount > 1)} 件が結合・FR-TRN-10）",
                 $"前処理         : {options}",
                 $"自動で消える   : {overlay.AutoHideAfter.TotalSeconds:F0} 秒後（FR-OVL-06）",
                 $"前面の追従     : {(keepVisibleFor is null ? "なし（モニタ全体のため）" : "ゲームと操作画面のみ表示")}",
@@ -934,7 +940,7 @@ public partial class MainWindow : Window, IDisposable
                     ? "4つとも設定済み。実際に効くかはゲーム上で操作して確認すること。"
                     : "★ 不足があります。要件を満たしていません。");
 
-            StatusText.Text = $"オーバーレイ表示中: {lines.Count} 行 / "
+            StatusText.Text = $"オーバーレイ表示中: {detected.Count} 行 → {lines.Count} 件 / "
                 + $"{result.Elapsed.TotalMilliseconds:F0} ms";
         }
         finally
@@ -1073,7 +1079,12 @@ public partial class MainWindow : Window, IDisposable
                 return;
             }
 
-            var translated = await LineTranslation.TranslateAsync(_translator, lines).ConfigureAwait(true);
+            // 切れた文を繋いでから翻訳する（FR-TRN-10）。
+            // 繋がずに渡すと、`Your printed body can` の can が「缶」と訳されるような
+            // 断片ごとの誤訳になる（PLAN.md 2026-09-26 の実測）。
+            var blocks = LineJoiner.Join(lines);
+
+            var translated = await LineTranslation.TranslateAsync(_translator, blocks).ConfigureAwait(true);
 
             if (!translated.Translation.IsSuccess)
             {
@@ -1094,7 +1105,7 @@ public partial class MainWindow : Window, IDisposable
             }
 
             OverlayHideButton.IsEnabled = true;
-            ShowScreenTranslationReport(target, frame, window, lines, translated, captureMs,
+            ShowScreenTranslationReport(target, frame, window, lines.Count, blocks, translated, captureMs,
                 ocr.Elapsed.TotalMilliseconds, total.Elapsed.TotalMilliseconds);
         }
         catch (OperationCanceledException)
@@ -1155,22 +1166,32 @@ public partial class MainWindow : Window, IDisposable
     /// <para>対応付けの数を出すのは、LLM が番号の形式を守らなかったときに黙って欠落させないため。</para>
     /// <para>翻訳に回さなかった行も一覧に残す。除外のルールが訳すべき行まで落としていないか、
     /// 実画面で目で確かめられるようにするため。</para>
+    /// <para>行結合（FR-TRN-10）の件数も出す。<b>繋ぎすぎは繋ぎ落としより害が大きい</b>ため、
+    /// 何行が 1 つになったかを実画面で確かめられるようにする。</para>
     /// </remarks>
+    /// <param name="detectedCount">OCR が検出した行数。結合前の数。</param>
+    /// <param name="source">結合した後のブロック。翻訳に渡した単位。</param>
     private void ShowScreenTranslationReport(
-        CaptureTarget target, CapturedFrame frame, FrameRect? window, List<OcrLine> source,
+        CaptureTarget target, CapturedFrame frame, FrameRect? window, int detectedCount,
+        List<OcrLine> source,
         LineTranslationResult translated, double captureMs, double ocrMs, double totalMs)
     {
         var translation = translated.Translation;
         var statuses = translated.Statuses;
         var skipped = source.Where((_, i) => statuses[i] == LineTranslationStatus.Skipped).Select(l => l.Text);
 
+        // 結合したブロックには元の行数を付ける。繋ぎすぎていれば一覧で気付ける。
         var pairs = source
-            .Select((from, i) => statuses[i] switch
+            .Select((from, i) =>
             {
-                LineTranslationStatus.Translated => $"  {from.Text}  →  {translated.Lines[i].Text}",
-                LineTranslationStatus.Unchanged => $"  {from.Text}  →  （原文と同じ・重ねない）",
-                LineTranslationStatus.Unmapped => $"  {from.Text}  →  （対応なし・重ねない）",
-                _ => null,
+                var head = from.SourceLineCount > 1 ? $"  ⤵{from.SourceLineCount}行 {from.Text}" : $"  {from.Text}";
+                return statuses[i] switch
+                {
+                    LineTranslationStatus.Translated => $"{head}  →  {translated.Lines[i].Text}",
+                    LineTranslationStatus.Unchanged => $"{head}  →  （原文と同じ・重ねない）",
+                    LineTranslationStatus.Unmapped => $"{head}  →  （対応なし・重ねない）",
+                    _ => null,
+                };
             })
             .OfType<string>();
 
@@ -1186,10 +1207,12 @@ public partial class MainWindow : Window, IDisposable
                     : $"画面           : {frame.Width}x{frame.Height}（範囲指定は使わない）",
                 $"バックエンド   : {_translator.Name}",
                 $"状態           : {DescribeOutcome(translation)}",
-                $"検出           : {source.Count} 行",
-                $"翻訳に回した   : {translated.SentCount} 行（数値・記号だけの {source.Count - translated.SentCount} 行は除外）",
-                $"対応付け       : {translated.MappedCount}/{translated.SentCount} 行",
-                $"重ねた         : {translated.LinesToOverlay.Count} 行（訳して文字が変わった行のみ）",
+                $"検出           : {detectedCount} 行",
+                $"行結合         : {detectedCount} 行 → {source.Count} 件"
+                    + $"（{source.Count(l => l.SourceLineCount > 1)} 件が結合・FR-TRN-10）",
+                $"翻訳に回した   : {translated.SentCount} 件（数値・記号だけの {source.Count - translated.SentCount} 件は除外）",
+                $"対応付け       : {translated.MappedCount}/{translated.SentCount} 件",
+                $"重ねた         : {translated.LinesToOverlay.Count} 件（訳して文字が変わったものだけ）",
                 string.Empty,
                 $"撮影           : {captureMs,6:F0} ms",
                 $"OCR            : {ocrMs,6:F0} ms",
@@ -1205,8 +1228,8 @@ public partial class MainWindow : Window, IDisposable
             ]);
 
         StatusText.Text = translation.IsSuccess
-            ? $"ホットキー: {translated.LinesToOverlay.Count} 行を重ねた"
-              + $"（{source.Count} 行中 {translated.SentCount} 行を翻訳）/ 合計 {totalMs:F0} ms"
+            ? $"ホットキー: {translated.LinesToOverlay.Count} 件を重ねた"
+              + $"（{detectedCount} 行 → {source.Count} 件中 {translated.SentCount} 件を翻訳）/ 合計 {totalMs:F0} ms"
             : $"ホットキー: 翻訳失敗 — {translation.Message}";
     }
 

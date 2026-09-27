@@ -277,19 +277,34 @@ public partial class OverlayWindow : Window
         LayerCanvas.Children.Clear();
         foreach (var line in content.Lines)
         {
-            var label = CreateLabel(line, scaleY);
+            var label = CreateLabel(line, scaleX, scaleY);
             Canvas.SetLeft(label, line.Box.X * scaleX);
             Canvas.SetTop(label, line.Box.Y * scaleY);
             LayerCanvas.Children.Add(label);
         }
     }
 
-    private static Border CreateLabel(OcrLine line, double scaleY)
+    /// <summary>
+    /// 1 つ分の札を作る。
+    /// </summary>
+    /// <remarks>
+    /// <para>文字の大きさは元の枠の高さに合わせる。ゲームが大きく描いている文字は
+    /// 大きく、小さい文字は小さく重ねないと、どこの訳か分からなくなる。</para>
+    /// <para><b>行を結合した札（FR-TRN-10）は枠が元の行すべてを囲む高さになっている。</b>
+    /// そのまま使うと文字が数倍の大きさになるため、結合した行数で割る。</para>
+    /// <para><b>結合した札は、元の段落と同じ大きさまで広げる。</b>
+    /// 札は中身に合わせて縮むが、訳文は原文より短く、行数も減る。
+    /// 縮んだままだと<b>原文の後ろの行が札からはみ出して残り</b>、
+    /// 訳文と原文が混ざって読めなくなる（2026-09-27、実画面で確認）。
+    /// 結合前は 1 行ごとに札が乗っていたため起きなかった問題。</para>
+    /// </remarks>
+    private static Border CreateLabel(OcrLine line, double scaleX, double scaleY)
     {
-        // 元の行の高さに合わせる。小さすぎると読めないので下限を設ける。
-        var fontSize = Math.Max(11, line.Box.Height * scaleY * 0.62);
+        // 小さすぎると読めないので下限を設ける。
+        var fontSize = Math.Max(11, line.Box.Height / (double)line.SourceLineCount * scaleY * 0.62);
+        var isJoined = line.SourceLineCount > 1;
 
-        return new Border
+        var label = new Border
         {
             Background = new SolidColorBrush(Color.FromArgb(210, 12, 14, 20)),
             BorderBrush = new SolidColorBrush(Color.FromArgb(150, 90, 200, 255)),
@@ -301,9 +316,19 @@ public partial class OverlayWindow : Window
                 Text = line.Text,
                 FontSize = fontSize,
                 Foreground = Brushes.White,
-                TextWrapping = TextWrapping.NoWrap,
+                TextWrapping = isJoined ? TextWrapping.Wrap : TextWrapping.NoWrap,
             },
         };
+
+        if (isJoined)
+        {
+            // 元の段落を覆う大きさ。幅は折り返し位置も兼ねる。
+            // 極端に細い枠で 1 文字ずつ折り返さないよう下限を置く。
+            label.Width = Math.Max(fontSize * 8, line.Box.Width * scaleX);
+            label.MinHeight = line.Box.Height * scaleY;
+        }
+
+        return label;
     }
 
     /// <summary>重ねる内容と、重ねる先の情報。</summary>
