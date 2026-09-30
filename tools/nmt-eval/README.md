@@ -1,0 +1,96 @@
+# tools/nmt-eval — ローカルNMT の訳文と速度の計測
+
+**製品と同じコード（`Glosslay.Core` の `LocalNmtTranslator`）を通して**測る道具。
+`tools/nmt-convert` の Python 側は元モデルの挙動を見るためのもので、役割が違う。
+
+---
+
+## 実行
+
+```bash
+dotnet run --project tools/nmt-eval/NmtBench
+```
+
+既定では `tools/nmt-convert/out/elan-en-ja/int8` を見る。引数でモデルを指定できる。
+
+```bash
+dotnet run --project tools/nmt-eval/NmtBench -- <モデルのディレクトリ>
+```
+
+| 引数 | 何をするか |
+|---|---|
+| `--tokens` | 分割と id だけを出す。翻訳しない |
+| `--batch` | 行をまとめて 1 回で流す（既定は 1 件ずつ） |
+
+---
+
+## `--tokens` が要る理由
+
+**トークナイザの id の引き方を間違えても、例外にならない。**
+
+Marian は `.spm` で「分割」だけを行い、id は `vocab.json` で引く。
+`EncodeToIds` の id をそのまま使うと別の語になり、**意味の通らない訳文が静かに出る**。
+2026-09-27 に `opus-mt-tc-big-zh-ja` で実際に踏んでいる（「勝利の漫画は、yにインポートされた後、」）。
+
+疑わしいときは Python 側と突き合わせる。
+
+```bash
+# C# 側
+dotnet run --project tools/nmt-eval/NmtBench -- <モデル> --tokens
+
+# Python 側
+cd tools/nmt-convert
+./.venv/Scripts/python.exe -c "
+from transformers import AutoTokenizer
+tok = AutoTokenizer.from_pretrained('out/elan-en-ja/int8')
+print(tok('Attack Power')['input_ids'])
+"
+```
+
+2026-10-01 に 16 文で突き合わせ、**不一致 0 件**を確認している。
+
+---
+
+## 1 件ずつが既定
+
+**まとめて流すと、訳文が同じ画面にある他の行に左右される。**
+短い行はバッチの最長行に合わせて詰め物で埋められ、その分だけ数値がわずかに動く。
+貪欲探索は僅差の語を選び直すため結果が変わる。
+**実装の誤りではなく、Python 側でも同じように変化する。**
+
+速度の利点は実際の画面ではほぼ無い（2026-10-01 実測・4 スレッド）。
+
+| 入力 | まとめて | 1 件ずつ |
+|---|---|---|
+| カード 1 画面 11 件（長短が混ざる） | 493 ms | **510 ms** — 差 3% |
+| 長文 3 件（長さが揃う） | 222 ms | 331 ms |
+| 短い 2 件 | 30 ms | 29 ms |
+
+まとめた場合は**全行が終わるまで回る**ため、長さが混ざると終わった行の分まで
+計算し続けて利点が消える。3% と引き換えに「同じ原文がいつも同じ訳になる」ことを選んでいる。
+
+> **1 件ずつなら Python の実装と訳文が完全に一致する。**
+> 2026-10-01 に長文 3 件で一字一句の一致を確認した。回帰を機械的に確かめられる。
+
+---
+
+## 訳文の質は人が読む
+
+一致度のような数字にはしていない。P0-7 と同じで、**数値の欠落なのか語尾の違いなのかは
+人でないと分けられない**ため。見るべき点。
+
+| 観点 | なぜ |
+|---|---|
+| **数値が保たれているか** | RULES.md 🟡-7。`HP 270` `2枚` `60気圧` が残ること |
+| **意味が反転していないか** | `prevent all damage` を「与える」と訳していないか。長文で起きやすい |
+| 固有名詞 | `Tera` →「寺」のような誤りは用語集（FR-TRN-11）で埋める前提 |
+
+---
+
+## 既知の落とし穴
+
+| 事象 | 内容 |
+|---|---|
+| `.spm` を書き換えていないと落ちる | Marian は `bos_id = -1`。`Microsoft.ML.Tokenizers` が `IndexOutOfRangeException` を投げる。`tools/nmt-convert/patch_spm.py` が 0 に書き換える |
+| 短い断片は訳が荒い | `30 damage` →「30ヶ所」。数値は保たれるが語が落ちる。行結合（FR-TRN-10）で文にしてから渡すこと |
+| モデルは配布物に同梱しない | CC BY-SA 4.0 の「並べて配る」立場を保つため、実行ファイルへ埋め込まない（`tools/nmt-convert/README.md`） |

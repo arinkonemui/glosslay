@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    NmtBench — ローカルNMT の訳文と速度の計測（FR-TRN-02 / PLAN.md 課題4）
+
+    製品と同じコード（Glosslay.Core の LocalNmtTranslator）を通して測る。
+    tools/nmt-convert の Python 版は元モデルの挙動を見るためのもので、役割が違う。
+    Glosslay.slnx には入れていない。実行方法は README.md を参照。
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Glosslay.Bench</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\Glosslay.Core\Glosslay.Core.csproj" />
+  </ItemGroup>
+
+</Project>

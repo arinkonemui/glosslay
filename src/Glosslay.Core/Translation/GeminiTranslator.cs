@@ -35,6 +35,10 @@ public sealed class GeminiTranslator : ITranslator
 
     public bool IsConfigured => _keyStore.Exists;
 
+    /// <inheritdoc />
+    /// <remarks>LLM は形式を守る保証がないため、番号付きの依頼文と応答の解釈が要る。</remarks>
+    public bool TranslatesLineByLine => false;
+
     public async Task<TranslationResult> TranslateAsync(
         TranslationRequest request, CancellationToken cancellationToken = default)
     {

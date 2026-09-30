@@ -39,11 +39,25 @@ public partial class MainWindow : Window, IDisposable
     /// <remarks>
     /// gemini.json を編集したら作り直すため、フィールドは差し替え可能にしている。
     /// </remarks>
-#pragma warning disable CA1859 // 具象型の方が速いが、ここは差し替え点。
-                              // v1.0 で LocalNmtTranslator に切り替える前提のため
-                              // インターフェースのまま持つ（RULES.md 🟡-2）。
-    private ITranslator _translator = new GeminiTranslator();
+#pragma warning disable CA1859 // 具象型の方が速いが、ここは差し替え点（RULES.md 🟡-2）。
+    private ITranslator _cloudTranslator = new GeminiTranslator();
 #pragma warning restore CA1859
+
+    /// <summary>
+    /// キー登録なしで動く既定のバックエンド（FR-TRN-02 / RULES.md 🟡-1）。
+    /// </summary>
+    private readonly LocalNmtTranslator _localTranslator = new();
+
+    /// <summary>
+    /// 実際に使うバックエンド。
+    /// </summary>
+    /// <remarks>
+    /// <b>キーが登録されていればクラウド、無ければローカル。</b>
+    /// RULES.md 🟡-1 の「既定はローカルNMT、クラウドは精度を上げたい人向けの任意の
+    /// アップグレード」をそのまま表している。<b>この順序を逆にしないこと。</b>
+    /// </remarks>
+    private ITranslator ActiveTranslator =>
+        _cloudTranslator.IsConfigured ? _cloudTranslator : _localTranslator;
 
     private ScreenCapture? _capture;
     private CaptureTarget? _activeTarget;
@@ -237,6 +251,34 @@ public partial class MainWindow : Window, IDisposable
 
         // FR-OCR-08: 初回 OCR で待たせないよう、起動時に非同期でモデルを読み込んでおく。
         _ = WarmUpOcrAsync();
+
+        // 翻訳モデルも同じ理由で先に読む。146MB あり、初回の翻訳で 1 秒近く待たされる。
+        _ = WarmUpTranslatorAsync();
+    }
+
+    /// <summary>
+    /// ローカルNMT のモデルを先に読む。
+    /// </summary>
+    /// <remarks>
+    /// <b>失敗しても黙って進む。</b>モデルが無い環境（変換していない場合）でも
+    /// クラウド翻訳は使えるため、起動を妨げない。翻訳を試みた時点で
+    /// <see cref="TranslationOutcome.NotConfigured"/> として具体的に知らせる。
+    /// </remarks>
+    private async Task WarmUpTranslatorAsync()
+    {
+        if (!_localTranslator.IsConfigured)
+        {
+            return;
+        }
+
+        try
+        {
+            await _localTranslator.InitializeAsync().ConfigureAwait(true);
+        }
+        catch (Exception exception) when (exception is FileNotFoundException or InvalidDataException)
+        {
+            StatusText.Text = $"翻訳モデルを読み込めませんでした: {exception.Message}";
+        }
     }
 
     private async Task WarmUpOcrAsync()
@@ -268,7 +310,8 @@ public partial class MainWindow : Window, IDisposable
         ReleaseCapture();
         _overlay?.Close();
         _ocrEngine.Dispose();
-        _translator.Dispose();
+        _cloudTranslator.Dispose();
+        _localTranslator.Dispose();
         GC.SuppressFinalize(this);
     }
 
@@ -693,11 +736,14 @@ public partial class MainWindow : Window, IDisposable
 
     private void RefreshTranslatorState()
     {
-        var configured = _translator.IsConfigured;
+        var configured = _cloudTranslator.IsConfigured;
 
+        // どちらで動くのかを出す。キーが無くても「使えない」ではないことを見せる。
         TranslatorStateText.Text = configured
-            ? $"{_translator.Name} — キー登録済み"
-            : $"{_translator.Name} — キー未登録";
+            ? $"{_cloudTranslator.Name} — キー登録済み"
+            : _localTranslator.IsConfigured
+                ? $"{_localTranslator.Name} — キー不要で動作中"
+                : $"{_localTranslator.Name} — モデル未配置 / キーも未登録";
 
         DeleteApiKeyButton.IsEnabled = configured;
     }
@@ -745,8 +791,8 @@ public partial class MainWindow : Window, IDisposable
         Process.Start(new ProcessStartInfo(path) { UseShellExecute = true })?.Dispose();
 
         // 編集後に「更新」を押させるのは忘れるため、次の翻訳で必ず読み直す形にする。
-        _translator.Dispose();
-        _translator = new GeminiTranslator();
+        _cloudTranslator.Dispose();
+        _cloudTranslator = new GeminiTranslator();
         RefreshTranslatorState();
 
         StatusText.Text = "gemini.json を開きました。保存すると次の翻訳から反映されます。";
@@ -773,12 +819,12 @@ public partial class MainWindow : Window, IDisposable
         StatusText.Text = "翻訳中…";
         try
         {
-            var result = await _translator
+            var result = await ActiveTranslator
                 .TranslateAsync(new TranslationRequest(source))
                 .ConfigureAwait(true);
 
             ResultText.Text = string.Join(Environment.NewLine,
-                $"バックエンド : {_translator.Name}",
+                $"バックエンド : {ActiveTranslator.Name}",
                 $"処理時間     : {result.Elapsed.TotalMilliseconds:F0} ms"
                     + (result.TotalTokens is { } tokens ? $" / {tokens} トークン" : string.Empty),
                 $"状態         : {DescribeOutcome(result)}",
@@ -804,7 +850,7 @@ public partial class MainWindow : Window, IDisposable
     /// </summary>
     /// <remarks>
     /// フォールバック対象かどうかを明示している。v1.0 ではここでローカルNMTへ切り替わる
-    /// （FR-TRN-06）が、PoC はローカルNMT未実装のため「切り替え先がない」と伝えるに留める。
+    /// （FR-TRN-06）。<b>切り替え先は実装済み</b>だが、自動で切り替える配線はまだ入れていない。
     /// </remarks>
     private static string DescribeOutcome(TranslationResult result)
     {
@@ -827,7 +873,7 @@ public partial class MainWindow : Window, IDisposable
         }
 
         return result.ShouldFallBack
-            ? state + "（v1.0 ではローカルNMTへ自動フォールバックする箇所。PoC は未実装）"
+            ? state + "（FR-TRN-06 でローカルNMTへ自動で切り替える箇所。自動化は未実装）"
             : state;
     }
 
@@ -1084,7 +1130,7 @@ public partial class MainWindow : Window, IDisposable
             // 断片ごとの誤訳になる（PLAN.md 2026-09-26 の実測）。
             var blocks = LineJoiner.Join(lines);
 
-            var translated = await LineTranslation.TranslateAsync(_translator, blocks).ConfigureAwait(true);
+            var translated = await LineTranslation.TranslateAsync(ActiveTranslator, blocks).ConfigureAwait(true);
 
             if (!translated.Translation.IsSuccess)
             {
@@ -1205,7 +1251,7 @@ public partial class MainWindow : Window, IDisposable
                     ? $"読んだ範囲     : {w.Width}x{w.Height} @ ({w.X},{w.Y})"
                       + $" — 画面 {frame.Width}x{frame.Height} の {(double)(w.Width * w.Height) / (frame.Width * frame.Height) * 100:F0}%"
                     : $"画面           : {frame.Width}x{frame.Height}（範囲指定は使わない）",
-                $"バックエンド   : {_translator.Name}",
+                $"バックエンド   : {ActiveTranslator.Name}",
                 $"状態           : {DescribeOutcome(translation)}",
                 $"検出           : {detectedCount} 行",
                 $"行結合         : {detectedCount} 行 → {source.Count} 件"

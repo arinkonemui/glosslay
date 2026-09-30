@@ -116,14 +116,26 @@ public static partial class LineTranslation
                 lines, statuses, new TranslationResult(string.Empty, TranslationOutcome.Succeeded, TimeSpan.Zero));
         }
 
-        var request = new TranslationRequest(BuildRequestText([.. sent.Select(i => lines[i].Text)]))
+        // 行の中の改行は対応を壊すため、どちらの経路でも空白に潰す。
+        var sources = sent.Select(i => lines[i].Text.ReplaceLineEndings(" ")).ToList();
+
+        // NMT は 1 行を 1 行に訳すので、そのまま渡して行数で対応づける。
+        // LLM は形式を守る保証がないため、番号を振って応答を解釈する。
+        var request = new TranslationRequest(
+            translator.TranslatesLineByLine
+                ? string.Join('\n', sources)
+                : BuildRequestText(sources))
         {
             TargetLanguage = targetLanguage,
         };
 
         var result = await translator.TranslateAsync(request, cancellationToken).ConfigureAwait(false);
 
-        var translated = result.IsSuccess ? Parse(result.Text, sent.Count) : new string?[sent.Count];
+        var translated = result.IsSuccess
+            ? translator.TranslatesLineByLine
+                ? SplitLines(result.Text, sent.Count)
+                : Parse(result.Text, sent.Count)
+            : new string?[sent.Count];
         var output = lines.ToList();
 
         for (var n = 0; n < sent.Count; n++)
@@ -224,6 +236,37 @@ public static partial class LineTranslation
         }
 
         return builder.ToString();
+    }
+
+    /// <summary>
+    /// 行ごとに訳す実装（<see cref="ITranslator.TranslatesLineByLine"/>）の応答を、行数で対応づける。
+    /// </summary>
+    /// <param name="response">改行区切りの訳文。</param>
+    /// <param name="count">依頼した行数。</param>
+    /// <returns>長さ <paramref name="count"/> の配列。足りない分は <c>null</c>。</returns>
+    /// <remarks>
+    /// <b>本数が合わなければ黙って詰めない。</b>ずれたまま詰めると、
+    /// 訳文が 1 行ずれて<b>別の場所に重なる</b> — 流暢なので誤りに気付けない。
+    /// 足りない分は対応なし（重ねない）として残す。
+    /// </remarks>
+    public static string?[] SplitLines(string response, int count)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+
+        var lines = response.ReplaceLineEndings("\n").Split('\n');
+        var results = new string?[count];
+
+        for (var i = 0; i < count && i < lines.Length; i++)
+        {
+            var text = lines[i].Trim();
+            if (text.Length > 0)
+            {
+                results[i] = text;
+            }
+        }
+
+        return results;
     }
 
     /// <summary>

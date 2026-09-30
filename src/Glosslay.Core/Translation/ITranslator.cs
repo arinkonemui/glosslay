@@ -30,6 +30,19 @@ public interface ITranslator : IDisposable
     bool IsConfigured { get; }
 
     /// <summary>
+    /// 原文の 1 行を訳文の 1 行に対応させて返せるか。
+    /// </summary>
+    /// <remarks>
+    /// <para><c>true</c> なら、改行で区切った原文に対して<b>同じ本数</b>の訳文を改行区切りで返す。
+    /// NMT は 1 文を 1 文に訳すため、番号付きの依頼文は要らない。</para>
+    /// <para><c>false</c> は LLM。<b>形式を守る保証がない</b>ため、
+    /// <c>[番号] 原文</c> の依頼文を組み立てて応答を解釈する必要がある
+    /// （<see cref="LineTranslation"/>）。指示文を読めない NMT にこれを渡すと、
+    /// 依頼文そのものを翻訳してしまう。</para>
+    /// </remarks>
+    bool TranslatesLineByLine { get; }
+
+    /// <summary>
     /// 翻訳する。
     /// </summary>
     /// <remarks>

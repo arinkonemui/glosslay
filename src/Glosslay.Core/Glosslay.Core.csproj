@@ -34,6 +34,16 @@
       （RULES.md「GPU推論は既定で無効」。ゲームと VRAM を奪い合わない）。
     -->
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.29.0" />
+    <!--
+      Microsoft.ML.Tokenizers — ローカルNMT（Marian）の SentencePiece 分割。
+      Marian の .spm は Unigram 方式で、自前実装すると学習時の分割とずれて
+      訳文が静かに劣化する（実行時エラーにならないため発見が遅れる）。
+
+      マネージド実装でネイティブ DLL を持たない（RULES.md 🔴-2 の AV 誤検知に有利）。
+      本体 318KB + 推移的な Google.Protobuf 478KB = 約 800KB。モデル 146MB に対して誤差。
+      RULES.md 🔵「依存関係を増やすときは相談する」に基づき 2026-10-01 に人間の承認を得て追加。
+    -->
+    <PackageReference Include="Microsoft.ML.Tokenizers" Version="2.0.0" />
     <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.333">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>

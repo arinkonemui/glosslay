@@ -38,4 +38,19 @@
     </None>
   </ItemGroup>
 
+  <!--
+    同じく、tools/nmt-convert で変換したローカルNMT のモデルを models\nmt\en-ja へ複製する。
+    LocalNmtOptions.ModelDirectory の既定と一致させてある。
+
+    .spm は patch_spm.py で bos_id を書き換えたものでなければ読み込みで落ちる
+    （tools/nmt-convert/README.md）。convert.py が書き換えたものを出す。
+  -->
+  <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)..\..\tools\nmt-convert\out\elan-en-ja\int8')">
+    <None Include="..\..\tools\nmt-convert\out\elan-en-ja\int8\*.onnx;..\..\tools\nmt-convert\out\elan-en-ja\int8\*.spm;..\..\tools\nmt-convert\out\elan-en-ja\int8\vocab.json">
+      <Link>models\nmt\en-ja\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
+    </None>
+  </ItemGroup>
+
 </Project>
