@@ -114,9 +114,20 @@ public sealed class LocalNmtTranslator : ITranslator
                 stopwatch.Elapsed);
         }
 
+        var lines = request.Text.ReplaceLineEndings("\n").Split('\n');
+
+        // 訳せる行が 1 つも無いなら、モデルを起こさずに理由を返す。
+        if (!lines.Any(l => !string.IsNullOrWhiteSpace(l) && Scripts.IsLatinText(l)))
+        {
+            return TranslationResult.Failure(
+                TranslationOutcome.Unsupported,
+                "同梱の翻訳モデルは英語→日本語のみに対応しています。"
+                + " 中国語などを訳すにはクラウド翻訳のAPIキーが必要です。",
+                stopwatch.Elapsed);
+        }
+
         await InitializeAsync(cancellationToken).ConfigureAwait(false);
 
-        var lines = request.Text.ReplaceLineEndings("\n").Split('\n');
         var translated = await Task.Run(() => TranslateLines(lines, cancellationToken), cancellationToken)
                                    .ConfigureAwait(false);
 
@@ -138,6 +149,13 @@ public sealed class LocalNmtTranslator : ITranslator
             if (string.IsNullOrWhiteSpace(lines[i]))
             {
                 output[i] = string.Empty;
+            }
+            else if (!Scripts.IsLatinText(lines[i]))
+            {
+                // 英→日のモデルに中国語・日本語を入れると、流暢な出鱈目が出る。
+                // 訳さず原文のまま返す。呼び出し側は「原文と同じ」として重ねない
+                // （LineTranslation の Unchanged）。RULES.md 🟡-1 の承認済みの例外。
+                output[i] = lines[i];
             }
             else
             {

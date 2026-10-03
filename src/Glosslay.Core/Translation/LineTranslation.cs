@@ -30,12 +30,26 @@ public enum LineTranslationStatus
 /// <param name="Translation">
 /// 翻訳の呼び出し結果。所要時間・状態・消費トークンはここを見る。
 /// 翻訳に回す行が無かった場合は呼び出していない（所要時間 0 の成功）。
+/// <b>切り替えが起きた場合は切り替え<i>後</i>の結果</b>（<see cref="FellBackFrom"/> 参照）。
 /// </param>
 public sealed record LineTranslationResult(
     IReadOnlyList<OcrLine> Lines,
     IReadOnlyList<LineTranslationStatus> Statuses,
     TranslationResult Translation)
 {
+    /// <summary>実際に訳したバックエンドの名前（FR-TRN-13 のバッジ）。</summary>
+    public string Backend { get; init; } = string.Empty;
+
+    /// <summary>
+    /// 切り替えが起きた場合の、<b>切り替え前</b>の失敗（FR-TRN-06）。起きていなければ <c>null</c>。
+    /// </summary>
+    /// <remarks>
+    /// <para>切り替え自体は静かに行う（RULES.md 🟡-6）。ゲーム中に操作を求めない。</para>
+    /// <para><b>ただし黙って隠さない。</b>訳の質が変わったことに気づけないと、
+    /// 「いつもより訳が悪い」理由が分からないまま使い続けることになる。
+    /// どちらで訳したかは UI に出す。</para>
+    /// </remarks>
+    public TranslationResult? FellBackFrom { get; init; }
     /// <summary>
     /// オーバーレイに重ねる行。
     /// </summary>
@@ -81,11 +95,18 @@ public static partial class LineTranslation
     /// <param name="lines">
     /// 翻訳する行。<b>読み順に並べてから渡すこと。</b>順番が崩れていると文脈が壊れて訳の質が落ちる。
     /// </param>
+    /// <param name="fallback">
+    /// 失敗したときに切り替える先（FR-TRN-06）。<c>null</c> なら切り替えない。
+    /// <b>ここで切り替えるのは、依頼文の形がバックエンドごとに違うため</b>
+    /// （<see cref="ITranslator.TranslatesLineByLine"/>）。
+    /// 外側で訳文だけを差し替えることはできない。
+    /// </param>
     /// <param name="targetLanguage">訳文の言語。</param>
     /// <param name="cancellationToken">キャンセル。</param>
     public static async Task<LineTranslationResult> TranslateAsync(
         ITranslator translator,
         IReadOnlyList<OcrLine> lines,
+        ITranslator? fallback = null,
         string targetLanguage = "ja",
         CancellationToken cancellationToken = default)
     {
@@ -119,23 +140,26 @@ public static partial class LineTranslation
         // 行の中の改行は対応を壊すため、どちらの経路でも空白に潰す。
         var sources = sent.Select(i => lines[i].Text.ReplaceLineEndings(" ")).ToList();
 
-        // NMT は 1 行を 1 行に訳すので、そのまま渡して行数で対応づける。
-        // LLM は形式を守る保証がないため、番号を振って応答を解釈する。
-        var request = new TranslationRequest(
-            translator.TranslatesLineByLine
-                ? string.Join('\n', sources)
-                : BuildRequestText(sources))
+        var attempt = await SendAsync(translator, sources, targetLanguage, cancellationToken)
+            .ConfigureAwait(false);
+
+        // FR-TRN-06: 混雑・上限・通信不良なら静かに切り替える。
+        // キー未登録と非対応は切り替えても同じ結果になるため含めない（ShouldFallBack）。
+        TranslationResult? failed = null;
+        if (fallback is not null && attempt.Result.ShouldFallBack)
         {
-            TargetLanguage = targetLanguage,
-        };
+            var second = await SendAsync(fallback, sources, targetLanguage, cancellationToken)
+                .ConfigureAwait(false);
 
-        var result = await translator.TranslateAsync(request, cancellationToken).ConfigureAwait(false);
+            if (second.Result.IsSuccess)
+            {
+                failed = attempt.Result;
+                attempt = second;
+                translator = fallback;
+            }
+        }
 
-        var translated = result.IsSuccess
-            ? translator.TranslatesLineByLine
-                ? SplitLines(result.Text, sent.Count)
-                : Parse(result.Text, sent.Count)
-            : new string?[sent.Count];
+        var translated = attempt.Translated;
         var output = lines.ToList();
 
         for (var n = 0; n < sent.Count; n++)
@@ -156,7 +180,43 @@ public static partial class LineTranslation
             }
         }
 
-        return new LineTranslationResult(output, statuses, result);
+        return new LineTranslationResult(output, statuses, attempt.Result)
+        {
+            Backend = translator.Name,
+            FellBackFrom = failed,
+        };
+    }
+
+    /// <summary>
+    /// 1 つのバックエンドへ依頼し、行ごとの訳文に戻す。
+    /// </summary>
+    /// <remarks>
+    /// <b>依頼文の形も応答の解釈もバックエンドで変わる</b>ため、対にして扱う。
+    /// フォールバック先へ渡すときは、ここから組み立て直す必要がある。
+    /// </remarks>
+    private static async Task<(TranslationResult Result, string?[] Translated)> SendAsync(
+        ITranslator translator, List<string> sources, string targetLanguage,
+        CancellationToken cancellationToken)
+    {
+        // NMT は 1 行を 1 行に訳すので、そのまま渡して行数で対応づける。
+        // LLM は形式を守る保証がないため、番号を振って応答を解釈する。
+        var request = new TranslationRequest(
+            translator.TranslatesLineByLine
+                ? string.Join('\n', sources)
+                : BuildRequestText(sources))
+        {
+            TargetLanguage = targetLanguage,
+        };
+
+        var result = await translator.TranslateAsync(request, cancellationToken).ConfigureAwait(false);
+
+        var translated = result.IsSuccess
+            ? translator.TranslatesLineByLine
+                ? SplitLines(result.Text, sources.Count)
+                : Parse(result.Text, sources.Count)
+            : new string?[sources.Count];
+
+        return (result, translated);
     }
 
     /// <summary>

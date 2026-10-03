@@ -103,6 +103,18 @@
                     <TextBlock x:Name="TranslatorStateText" TextWrapping="Wrap" FontSize="11"
                                Foreground="#666" Text="確認中…" />
 
+                    <!-- FR-TRN-01 / FR-TRN-06。自動で切り替わってほしくない人のための選択。
+                         既定は「自動」で、キーが無くても動き、混雑しても止まらない。 -->
+                    <TextBlock Text="使うバックエンド" Margin="0,8,0,2" FontSize="11" />
+                    <RadioButton x:Name="BackendAutoRadio" GroupName="Backend" Checked="OnBackendChanged"
+                                 Content="自動（クラウド優先・失敗したらローカルへ切替）" />
+                    <RadioButton x:Name="BackendCloudRadio" GroupName="Backend" Checked="OnBackendChanged"
+                                 Content="クラウドのみ（失敗しても切り替えない）" Margin="0,2,0,0" />
+                    <RadioButton x:Name="BackendLocalRadio" GroupName="Backend" Checked="OnBackendChanged"
+                                 Content="ローカルのみ（キーがあっても使わない）" Margin="0,2,0,0" />
+                    <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,4,0,0"
+                               Text="「クラウドのみ」は、質の落ちた訳が黙って出るより「今は訳せない」と分かる方がよい場合に選びます。translation.json に保存します。" />
+
                     <!-- FR-MOD-01 手動モード。ゲーム中に押す想定のため、ここに操作を明示しておく。 -->
                     <TextBlock Text="ホットキー" Margin="0,8,0,2" FontSize="11" />
                     <TextBlock x:Name="HotkeyText" TextWrapping="Wrap" FontWeight="SemiBold"

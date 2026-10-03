@@ -48,6 +48,9 @@ public partial class MainWindow : Window, IDisposable
     /// </summary>
     private readonly LocalNmtTranslator _localTranslator = new();
 
+    /// <summary>どのバックエンドを使うかの選択（FR-TRN-01 / FR-TRN-06）。</summary>
+    private TranslationOptions _translationOptions = TranslationOptions.Load();
+
     /// <summary>
     /// 実際に使うバックエンド。
     /// </summary>
@@ -57,7 +60,22 @@ public partial class MainWindow : Window, IDisposable
     /// アップグレード」をそのまま表している。<b>この順序を逆にしないこと。</b>
     /// </remarks>
     private ITranslator ActiveTranslator =>
-        _cloudTranslator.IsConfigured ? _cloudTranslator : _localTranslator;
+        TranslatorSelection.Active(_translationOptions.Backend, _cloudTranslator, _localTranslator);
+
+    /// <summary>
+    /// <see cref="ActiveTranslator"/> が失敗したときの切り替え先（FR-TRN-06）。
+    /// </summary>
+    /// <remarks>
+    /// <b>「自動」以外を選んでいるなら切り替えない。</b>利用者が明示的に決めた動きを、
+    /// 失敗したからといって覆さない。
+    /// 既にローカルで動いている場合と、モデルが置かれていない場合も <c>null</c>
+    /// （切り替えても同じ失敗になる）。
+    /// </remarks>
+    private ITranslator? FallbackTranslator =>
+        TranslatorSelection.Fallback(_translationOptions.Backend, _cloudTranslator, _localTranslator);
+
+    /// <summary>ラジオへ選択を反映している間、Checked の処理を止める。</summary>
+    private bool _suppressBackendChange;
 
     private ScreenCapture? _capture;
     private CaptureTarget? _activeTarget;
@@ -738,12 +756,20 @@ public partial class MainWindow : Window, IDisposable
     {
         var configured = _cloudTranslator.IsConfigured;
 
-        // どちらで動くのかを出す。キーが無くても「使えない」ではないことを見せる。
-        TranslatorStateText.Text = configured
-            ? $"{_cloudTranslator.Name} — キー登録済み"
-            : _localTranslator.IsConfigured
-                ? $"{_localTranslator.Name} — キー不要で動作中"
-                : $"{_localTranslator.Name} — モデル未配置 / キーも未登録";
+        // 選択をラジオへ反映する。Checked が発火して保存し直さないよう、先に外す。
+        _suppressBackendChange = true;
+        BackendAutoRadio.IsChecked = _translationOptions.Backend == TranslationBackendChoice.Auto;
+        BackendCloudRadio.IsChecked = _translationOptions.Backend == TranslationBackendChoice.CloudOnly;
+        BackendLocalRadio.IsChecked = _translationOptions.Backend == TranslationBackendChoice.LocalOnly;
+        _suppressBackendChange = false;
+
+        // いま何で動くのかを出す。キーが無くても「使えない」ではないことを見せる。
+        var active = ActiveTranslator;
+        TranslatorStateText.Text = active.IsConfigured
+            ? $"{active.Name} — 使用中"
+            : ReferenceEquals(active, _cloudTranslator)
+                ? $"{active.Name} — キー未登録のため訳せません（「自動」にすればローカルで動きます）"
+                : $"{active.Name} — モデル未配置";
 
         DeleteApiKeyButton.IsEnabled = configured;
     }
@@ -762,6 +788,36 @@ public partial class MainWindow : Window, IDisposable
 
         RefreshTranslatorState();
         StatusText.Text = "APIキーを暗号化して保存しました。「翻訳を実行」で試せます。";
+    }
+
+    /// <summary>バックエンドの選択が変わった（FR-TRN-01 / FR-TRN-06）。</summary>
+    /// <remarks>
+    /// <b>押した時点で保存する。</b>「適用」を押し忘れて効いていない、という状態を作らない。
+    /// </remarks>
+    private void OnBackendChanged(object sender, RoutedEventArgs e)
+    {
+        if (_suppressBackendChange)
+        {
+            return;
+        }
+
+        var choice = sender switch
+        {
+            _ when ReferenceEquals(sender, BackendCloudRadio) => TranslationBackendChoice.CloudOnly,
+            _ when ReferenceEquals(sender, BackendLocalRadio) => TranslationBackendChoice.LocalOnly,
+            _ => TranslationBackendChoice.Auto,
+        };
+
+        _translationOptions = _translationOptions with { Backend = choice };
+        _translationOptions.Save();
+        RefreshTranslatorState();
+
+        StatusText.Text = choice switch
+        {
+            TranslationBackendChoice.CloudOnly => "クラウドのみを使います。失敗しても切り替えません。",
+            TranslationBackendChoice.LocalOnly => "ローカルのみを使います。通信しません。",
+            _ => "自動で切り替えます（クラウドが失敗したらローカルへ）。",
+        };
     }
 
     private void OnDeleteApiKeyClick(object sender, RoutedEventArgs e)
@@ -819,6 +875,8 @@ public partial class MainWindow : Window, IDisposable
         StatusText.Text = "翻訳中…";
         try
         {
+            // ここは検証用のボタン。FR-TRN-06 の切り替えは入れていない。
+            // どのバックエンドが何を返したかを、隠さずそのまま見るための経路。
             var result = await ActiveTranslator
                 .TranslateAsync(new TranslationRequest(source))
                 .ConfigureAwait(true);
@@ -864,6 +922,7 @@ public partial class MainWindow : Window, IDisposable
             TranslationOutcome.Busy => "混雑（HTTP 503）",
             TranslationOutcome.ServiceError => "サービスエラー",
             TranslationOutcome.Blocked => "応答が拒否された",
+            TranslationOutcome.Unsupported => "原文の言語に非対応",
             _ => result.Outcome.ToString(),
         };
 
@@ -1130,7 +1189,11 @@ public partial class MainWindow : Window, IDisposable
             // 断片ごとの誤訳になる（PLAN.md 2026-09-26 の実測）。
             var blocks = LineJoiner.Join(lines);
 
-            var translated = await LineTranslation.TranslateAsync(ActiveTranslator, blocks).ConfigureAwait(true);
+            // FR-TRN-06: クラウドが混雑・上限・通信不良なら静かにローカルへ切り替える。
+            // 切り替え先が自分自身のときは渡さない（同じものを 2 回試しても無駄）。
+            var translated = await LineTranslation
+                .TranslateAsync(ActiveTranslator, blocks, FallbackTranslator)
+                .ConfigureAwait(true);
 
             if (!translated.Translation.IsSuccess)
             {
@@ -1201,6 +1264,7 @@ public partial class MainWindow : Window, IDisposable
         TranslationOutcome.Busy => "翻訳サービスが混雑しています（時間をおくと戻ります）",
         TranslationOutcome.ServiceError => "翻訳サービスがエラーを返しました",
         TranslationOutcome.Blocked => "翻訳が拒否されました",
+        TranslationOutcome.Unsupported => "この言語には同梱のモデルが対応していません",
         _ => outcome.ToString(),
     };
 
@@ -1251,7 +1315,10 @@ public partial class MainWindow : Window, IDisposable
                     ? $"読んだ範囲     : {w.Width}x{w.Height} @ ({w.X},{w.Y})"
                       + $" — 画面 {frame.Width}x{frame.Height} の {(double)(w.Width * w.Height) / (frame.Width * frame.Height) * 100:F0}%"
                     : $"画面           : {frame.Width}x{frame.Height}（範囲指定は使わない）",
-                $"バックエンド   : {ActiveTranslator.Name}",
+                $"バックエンド   : {(translated.Backend.Length > 0 ? translated.Backend : ActiveTranslator.Name)}"
+                    + (translated.FellBackFrom is { } from
+                        ? $"（{ShortOutcome(from.Outcome)}のため切替・FR-TRN-06）"
+                        : string.Empty),
                 $"状態           : {DescribeOutcome(translation)}",
                 $"検出           : {detectedCount} 行",
                 $"行結合         : {detectedCount} 行 → {source.Count} 件"
@@ -1276,6 +1343,7 @@ public partial class MainWindow : Window, IDisposable
         StatusText.Text = translation.IsSuccess
             ? $"ホットキー: {translated.LinesToOverlay.Count} 件を重ねた"
               + $"（{detectedCount} 行 → {source.Count} 件中 {translated.SentCount} 件を翻訳）/ 合計 {totalMs:F0} ms"
+              + (translated.FellBackFrom is not null ? $" — {translated.Backend} へ切替" : string.Empty)
             : $"ホットキー: 翻訳失敗 — {translation.Message}";
     }
 

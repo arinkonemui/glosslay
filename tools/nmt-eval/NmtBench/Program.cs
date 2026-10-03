@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using Glosslay.Ocr;
 using Glosslay.Translation;
 
 namespace Glosslay.Bench;
@@ -101,6 +102,20 @@ internal static class Program
 
         using var translator = new LocalNmtTranslator(options);
 
+        // --selection: 選択の規則を表のまま検査する。翻訳しない。
+        if (args.Contains("--selection", StringComparer.Ordinal))
+        {
+            return CheckSelection();
+        }
+
+        // --fallback: FR-TRN-06 の切り替えを確かめる。
+        // クラウドの失敗を待たずに済むよう、必ず失敗するバックエンドを使う。
+        if (args.Contains("--fallback", StringComparer.Ordinal))
+        {
+            await CheckFallbackAsync(translator).ConfigureAwait(false);
+            return 0;
+        }
+
         var loading = Stopwatch.StartNew();
         await translator.InitializeAsync().ConfigureAwait(false);
         Console.WriteLine($"バックエンド : {translator.Name}");
@@ -149,6 +164,152 @@ internal static class Program
         Console.WriteLine("訳文の質は人が読んで判断する。Python 側（tools/nmt-convert/compare.py）と");
         Console.WriteLine("食い違う場合は、トークナイザの id の引き方を疑うこと。");
         return 0;
+    }
+
+    /// <summary>
+    /// バックエンドの選択（FR-TRN-01 / FR-TRN-06）を表のまま検査する。
+    /// </summary>
+    /// <remarks>
+    /// <b>RULES.md 🟡-1「既定はローカル、クラウドは任意のアップグレード」がここで崩れる。</b>
+    /// 選択肢が増えたので、順序が逆になっていないかを機械的に見る。
+    /// </remarks>
+    private static int CheckSelection()
+    {
+        using var cloud = new Stub("クラウド", configured: true);
+        using var cloudNoKey = new Stub("クラウド", configured: false);
+        using var local = new Stub("ローカル", configured: true);
+        using var localNoModel = new Stub("ローカル", configured: false);
+
+        (string Label, TranslationBackendChoice Choice, Stub Cloud, Stub Local,
+            string Active, string Fallback)[] cases =
+        [
+            ("自動・キーあり",        TranslationBackendChoice.Auto,      cloud,      local,        "クラウド", "ローカル"),
+            ("自動・キーなし",        TranslationBackendChoice.Auto,      cloudNoKey, local,        "ローカル", "なし"),
+            ("自動・モデルなし",      TranslationBackendChoice.Auto,      cloud,      localNoModel, "クラウド", "なし"),
+            ("クラウドのみ・キーあり", TranslationBackendChoice.CloudOnly, cloud,      local,        "クラウド", "なし"),
+            ("クラウドのみ・キーなし", TranslationBackendChoice.CloudOnly, cloudNoKey, local,        "クラウド", "なし"),
+            ("ローカルのみ・キーあり", TranslationBackendChoice.LocalOnly, cloud,      local,        "ローカル", "なし"),
+        ];
+
+        Console.WriteLine("=== バックエンドの選択 ===");
+        Console.WriteLine($"  {"場合",-22} {"使う",-10} {"切替先",-10} 判定");
+
+        var failures = 0;
+        foreach (var (label, choice, c, l, wantActive, wantFallback) in cases)
+        {
+            var active = TranslatorSelection.Active(choice, c, l).Name;
+            var fallback = TranslatorSelection.Fallback(choice, c, l)?.Name ?? "なし";
+            var ok = active == wantActive && fallback == wantFallback;
+            if (!ok)
+            {
+                failures++;
+            }
+
+            Console.WriteLine($"  {label,-22} {active,-10} {fallback,-10} "
+                              + (ok ? "OK" : $"★ 期待 {wantActive} / {wantFallback}"));
+        }
+
+        Console.WriteLine();
+        Console.WriteLine(failures == 0 ? "すべて期待どおり。" : $"★ {failures} 件が期待と違う。");
+        return failures == 0 ? 0 : 1;
+    }
+
+    /// <summary>選択の検査にだけ使う、翻訳しないバックエンド。</summary>
+    private sealed class Stub(string name, bool configured) : ITranslator
+    {
+        public string Name => name;
+
+        public bool IsConfigured => configured;
+
+        public bool TranslatesLineByLine => false;
+
+        public Task<TranslationResult> TranslateAsync(
+            TranslationRequest request, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("選択の検査専用。");
+
+        public void Dispose()
+        {
+        }
+    }
+
+    /// <summary>
+    /// FR-TRN-06「429 / ネットワークエラー時は静かにローカルNMTへフォールバック」の確認。
+    /// </summary>
+    /// <remarks>
+    /// <b>切り替えるべき場合と、切り替えてはいけない場合の両方を見る。</b>
+    /// 失敗したら必ず切り替える実装は、キーの設定ミスを隠してしまう（RULES.md 🟡-6）。
+    /// </remarks>
+    private static async Task CheckFallbackAsync(LocalNmtTranslator local)
+    {
+        OcrLine[] english =
+        [
+            new("Attack Power", 1f, new OcrBox(0, 0, 100, 20)),
+            new("Evolves from Eevee", 1f, new OcrBox(0, 30, 100, 20)),
+        ];
+
+        OcrLine[] chinese =
+        [
+            new("使用这个技能需要消耗30点灵力。", 1f, new OcrBox(0, 0, 100, 20)),
+        ];
+
+        (string Label, TranslationOutcome Outcome, OcrLine[] Lines, bool ShouldSwitch)[] cases =
+        [
+            ("混雑（HTTP 503）", TranslationOutcome.Busy, english, true),
+            ("利用上限（HTTP 429）", TranslationOutcome.RateLimited, english, true),
+            ("応答なし", TranslationOutcome.Timeout, english, true),
+            ("キー未登録", TranslationOutcome.NotConfigured, english, false),
+            ("混雑だが原文が中国語", TranslationOutcome.Busy, chinese, false),
+        ];
+
+        Console.WriteLine("=== FR-TRN-06 切り替えの確認 ===");
+        var failures = 0;
+
+        foreach (var (label, outcome, lines, shouldSwitch) in cases)
+        {
+            using var primary = new AlwaysFails(outcome);
+            var result = await LineTranslation.TranslateAsync(primary, lines, local).ConfigureAwait(false);
+
+            var switched = result.FellBackFrom is not null;
+            var ok = switched == shouldSwitch;
+            if (!ok)
+            {
+                failures++;
+            }
+
+            Console.WriteLine($"  {(ok ? "  " : "★ ")}{label,-22} "
+                              + $"切替 {(switched ? "した" : "しない"),-4} "
+                              + $"（期待 {(shouldSwitch ? "する" : "しない")}）"
+                              + $"  状態 {result.Translation.Outcome}");
+
+            for (var i = 0; i < lines.Length; i++)
+            {
+                Console.WriteLine($"      {lines[i].Text}  →  {result.Lines[i].Text}  [{result.Statuses[i]}]");
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine(failures == 0 ? "すべて期待どおり。" : $"★ {failures} 件が期待と違う。");
+    }
+
+    /// <summary>必ず指定した失敗を返すバックエンド。切り替えの確認にだけ使う。</summary>
+    private sealed class AlwaysFails(TranslationOutcome outcome) : ITranslator
+    {
+        public string Name => $"検査用（常に {outcome}）";
+
+        public bool IsConfigured => true;
+
+        public bool TranslatesLineByLine => false;
+
+        public Task<TranslationResult> TranslateAsync(
+            TranslationRequest request, CancellationToken cancellationToken = default) =>
+            Task.FromResult(new TranslationResult(string.Empty, outcome, TimeSpan.Zero)
+            {
+                Message = "検査用",
+            });
+
+        public void Dispose()
+        {
+        }
     }
 
     private static Task<TranslationResult> TranslateAsync(LocalNmtTranslator translator, string[] lines) =>

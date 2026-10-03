@@ -56,6 +56,16 @@ public enum TranslationOutcome
 
     /// <summary>安全フィルタ等で応答が返らなかった。</summary>
     Blocked,
+
+    /// <summary>
+    /// 原文の言語に対応していない。
+    /// </summary>
+    /// <remarks>
+    /// <b>フォールバックの対象ではない。</b>切り替えても同じ結果になる。
+    /// ローカルNMT は英→日のみのため、中国語の原文はここになる
+    /// （RULES.md 🟡-1 の承認済みの例外）。
+    /// </remarks>
+    Unsupported,
 }
 
 /// <summary>翻訳の結果。</summary>
@@ -88,6 +98,7 @@ public sealed record TranslationResult(string Text, TranslationOutcome Outcome, 
     /// キー未登録（<see cref="TranslationOutcome.NotConfigured"/>）を含めないのが要点。
     /// 設定の誤りを黙ってフォールバックで隠すと、利用者は「キーを登録したのに効いていない」ことに
     /// 気づけない。こちらは UI で知らせる。
+    /// <see cref="TranslationOutcome.Unsupported"/> も含めない。切り替えても同じ結果になる。
     /// </remarks>
     public bool ShouldFallBack => Outcome
         is TranslationOutcome.RateLimited

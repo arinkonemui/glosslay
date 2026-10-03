@@ -362,19 +362,7 @@ public static class LineJoiner
     /// 分かち書きしない言語では不自然な入力になる。句読点や閉じ括弧の前にも入れない。
     /// </remarks>
     private static bool NeedsSpace(char left, char right) =>
-        !IsWideScript(left) && !IsWideScript(right) && !NoSpaceBefore.Contains(right);
-
-    /// <summary>分かち書きをしない文字か（漢字・かな・ハングル・全角記号）。</summary>
-    private static bool IsWideScript(char c) => c
-        is >= '\u1100' and <= '\u11FF'      // ハングル字母
-        or >= '\u3000' and <= '\u303F'      // CJK の記号・句読点
-        or >= '\u3040' and <= '\u30FF'      // ひらがな・カタカナ
-        or >= '\u3130' and <= '\u318F'      // ハングル互換字母
-        or >= '\u3400' and <= '\u4DBF'      // CJK 統合漢字拡張A
-        or >= '\u4E00' and <= '\u9FFF'      // CJK 統合漢字
-        or >= '\uAC00' and <= '\uD7AF'      // ハングル音節
-        or >= '\uF900' and <= '\uFAFF'      // CJK 互換漢字
-        or >= '\uFF00' and <= '\uFFEF';     // 全角・半角形
+        !Scripts.IsWide(left) && !Scripts.IsWide(right) && !NoSpaceBefore.Contains(right);
 
     private const string SentenceEnds = ".!?:;…。！？：；)]}）］｝」』";
 
