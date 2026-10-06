@@ -1,0 +1,9 @@
+COMPONENT DETAILS
+PANEL VIEW
+ENERGY VENT
+UNLOCK: 10,000 SLVR
+Using your last energy charge increases Max Speed,
+Max Reverse Speed and Hull Rotation Speed by 3.50%.
+This effect can stack up to 5 times.
+Your last energy charge is when you only have enough energy to
+use your ability once

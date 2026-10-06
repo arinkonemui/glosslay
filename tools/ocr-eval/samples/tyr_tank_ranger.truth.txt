@@ -1,0 +1,58 @@
+RANKED SOLO/DUO IS LIVE.
+Q
+PLAY
+TANKS
+ARMOR
+BATTLES
+RANKED
+CLANS
+E
+Arinko_Zzz
+50
+208,589
+RANGER
+Z
+C
+W
+S
+All-rounder medium with a fast firing gun, good mobility and good armor it can use to
+bully low penetration tanks. Can place boost ramps for quick movement.
+DIFFICULTY
+FIREPOWER
+DURABILITY
+MOBILITY
+SCOUTING
+RAMP
+Place a boosting ramp that propels vehicles driving over it.
+ENERGY COST:
+50
+COOLDOWN:
+10s
+DURATION:
+--
+A
+D
+LV19
+LV20
+LV21
+LV22
+LV23
+LV24
+TECH POINTS X3
+TECH POINTS
+ROOKIE
+ADEPT
+OPERATOR
+SPECIALIST
+LV20
+1,350/20,000XP
+LV21
+BOOST XP (HOLD)
+MASTERY
+XP BOOST
+00
+ESC
+BACK
+ALL CONTENT AND ARTWORK ARE A WORK-IN-PROGRESS
+CUSTOMIZE STYLE
+EDIT LOADOUTS

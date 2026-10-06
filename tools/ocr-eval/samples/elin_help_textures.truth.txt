@@ -1,0 +1,20 @@
+Replacing Textures
+Texture Viewer
+By using the in-game Texture Viewer, you can easily replace images. Open the Texture
+Viewer from the system menu's tools, click on the image you want to replace and select
+'Create Replacement'. The replacement image will be generated in the 'Elin/User/Texture
+Replace' folder.
+Replaced images are displayed with a green background, and you can launch the application
+associated with the image by clicking 'Open'. You can also delete the replacement image by
+selecting 'Delete'.
+In-Map Replacements
+From the Texture Viewer, you can also create 'In-Map Replacement'. These are replacement
+images that only apply to the map you're currently on, and they take priority over regular
+replacement images and those replaced by mods. Please note that In-Map replacements are
+only valid in the save data of the world you're currently playing.
+When you upload a map with In-Map replacement images, they are also uploaded and will be
+displayed to other players.
+Drag & Drop to replace
+You can add replacement images created by other players to the game by directly dragging
+and dropping the files onto the game screen. If you want to add them manually, please place
+the image files in the 'Elin/User/Texture Replace' folder.

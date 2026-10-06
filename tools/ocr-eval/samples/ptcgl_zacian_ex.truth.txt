@@ -1,0 +1,22 @@
+BASIC
+Hop's Zacian ex
+HP
+230
+Insta-Strike
+30
+This attack also does 30 damage to 1 of your opponent's
+Benched Pokémon. (Don't apply Weakness and Resistance
+for Benched Pokémon.)
+Brave Slash
+240
+During your next turn, this Pokémon can't use Brave Slash.
+weakness
+×2
+resistance
+-30
+retreat
+Illus. DOM
+Pokémon ex rule
+When your Pokémon ex
+is Knocked Out, your opponent takes 2 Prize cards.
+186/159

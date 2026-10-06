@@ -1,0 +1,31 @@
+Q
+R
+Raw material structures
+Structures to gather and produce natural
+formed materials.
+Gathering Camp
+Gathering Camp
+100/100
+A place to forage for materials.
+Anything grass-shaped can be gathered.
+Built Number: 0
+Affecting ability :
+Feature
+3x2
+30
+Construction Resources
+0/4
+22/4
+Gather
+Purifying Lily
+A noble and beautiful flower. It is said that a
+secret lies beneath the blooming Purifying Lily.
+Type:
+Plant
+Predator:
+Gathered
+resource:
+Cultivation Materials
+Required workload:
+50
+E Select F Details T Bookmark X Search ESC Back

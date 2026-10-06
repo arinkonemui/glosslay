@@ -1,0 +1,17 @@
+0
+20,000
+0/20
+20
+2
+Lv.1
+X:126 Y:157
+Day 1
+02:00
+Gained Research point from a new resource.( Dirt)
+Dirt Block
+50/50
+Moving speed : +15%
+Dirt Block
+SHIFT Mode change
+Q Order
+G Admin

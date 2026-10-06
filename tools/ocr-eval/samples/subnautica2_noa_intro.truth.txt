@@ -1,0 +1,30 @@
+E
+105
+120
+SE
+150
+165
+S
+195
+210
+582 m
+NOA
+LIMITED ACCESS
+ACTIVATED
+NoeticAdvisorShell 2.4.1
+Rosette V Digital Lifepod - Emergency Mode
+What's going on? Where are we?
+My full name is Noetic Advisor node ISV-CI-DSB3. Between us, I prefer
+NoA. You are the QI: the Qualified Investigator. Wear it with pride.
+We have made violent planetfall. I don't know the status of the pioneer
+colonists, the Cicada, or the 40,000 souls stored in its quartz memory.
+If we're going to complete the mission to build a human future on this
+world...you will have to lead the way.
+Are you ready to begin?
+Launch
+O₂
+45
+CLOSE ( ESC )
+SKIP ( )
+SELECT ( )
+0.1.2.2-128456 (119691)

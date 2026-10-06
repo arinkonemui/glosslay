@@ -1,0 +1,14 @@
+Loading Shaders... 77
+CREATE NEW GAME
+SELECT GAME MODE
+SURVIVAL
+Manage health, hunger, thirst, and oxygen. Respawn upon death, but drop some items.
+CREATIVE
+Explore freely with unlimited resources. No health, hunger, thirst, or oxygen constraints.
+UNKNOWN
+Coming Soon
+PLAY SINGLE PLAYER
+SETTINGS
+BACK
+ESC
+Version 0.1.2.2-128456

@@ -1,0 +1,10 @@
+AMMUNITION SHELL DETAILS
+PANEL VIEW
+SILENCED
+SECONDARY SHELL
+Fires silently without increasing visibility, but deals less
+damage.
+AVG. DAMAGE/SHOT
+-34%
+SHOT DETECTION RADIUS
+-100%

@@ -1,0 +1,26 @@
+STAGE2
+Hydreigon ex
+HP
+330
+Evolves from Zweilous
+Tera
+As long as this Pokémon is on your Bench, prevent all damage done to this
+Pokémon by attacks (both yours and your opponent's).
+Crashing Headbutt
+200
+Discard the top 3 cards of your opponent's deck.
+Obsidian
+130
+This attack also does 130 damage to 2 of your opponent's
+Benched Pokémon. (Don't apply Weakness and Resistance
+for Benched Pokémon.)
+weakness
+×2
+resistance
+retreat
+Illus. 5ban Graphics
+Pokémon ex rule
+When your Pokémon ex
+is Knocked Out, your opponent takes 2 Prize cards.
+119/191
+©2025 Pokémon / Nintendo / Creatures / GAME FREAK

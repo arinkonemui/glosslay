@@ -1,0 +1,26 @@
+STAGE1
+Archaludon ex
+HP
+300
+Evolves from Duraludon
+Ability
+Assemble Alloy
+When you play this Pokémon from your hand to evolve
+1 of your Pokémon during your turn, you may attach up
+to 2 Basic Energy cards from your discard pile to your
+Pokémon in any way you like.
+Metal Defender
+220
+During your opponent's next turn, this Pokémon has no
+Weakness.
+weakness
+×2
+resistance
+-30
+retreat
+Illus. Shinya Mizuno
+Pokémon ex rule
+When your Pokémon ex
+is Knocked Out, your opponent takes 2 Prize cards.
+241/191
+©2024 Pokémon / Nintendo / Creatures / GAME FREAK

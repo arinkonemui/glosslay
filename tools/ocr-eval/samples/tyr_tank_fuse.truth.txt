@@ -1,0 +1,62 @@
+RANKED SOLO/DUO IS LIVE.
+Q
+PLAY
+TANKS
+ARMOR
+BATTLES
+RANKED
+CLANS
+E
+Arinko_Zzz
+50
+208,589
+FUSE
+ALPHA
+Z
+C
+W
+S
+Quick and sneaky light tank able to launch guided sticky missiles. Effective at sneaking
+around undetected and chipping down heavy armor.
+DIFFICULTY
+FIREPOWER
+DURABILITY
+MOBILITY
+SCOUTING
+GLOM MISSILE
+Launch a laser guided missile that gloms onto the first surface
+hit. Glommed missiles can be shot or glommed with another
+missile to detonate them for 150 damage. Detonations will chain
+to any other glommed missiles in the area.
+ENERGY COST:
+25
+COOLDOWN:
+3s
+DURATION:
+--
+A
+D
+LV07
+LV08
+LV09
+LV10
+LV11
+LV12
+TECH POINTS X2
+TECH POINTS X2
+TECH POINTS X2
+ENERGY EXPANDER
+TECH POINTS X2
+TECH POINTS X2
+LV10
+486/1,000XP
+LV11
+BOOST XP (HOLD)
+MASTERY
+XP BOOST
+00
+ESC
+BACK
+ALL CONTENT AND ARTWORK ARE A WORK-IN-PROGRESS
+CUSTOMIZE STYLE
+EDIT LOADOUTS
