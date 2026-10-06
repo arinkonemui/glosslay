@@ -52,6 +52,15 @@ public partial class MainWindow : Window, IDisposable
     private TranslationOptions _translationOptions = TranslationOptions.Load();
 
     /// <summary>
+    /// 訳文の使い回し（FR-TRN-09 / RULES.md 🟡-8）。
+    /// </summary>
+    /// <remarks>
+    /// 同じ画面でホットキーを押し直したときに、呼び出しも待ち時間もゼロにする。
+    /// バックエンドを変えたら忘れる（<see cref="OnBackendChanged"/>）。
+    /// </remarks>
+    private readonly TranslationCache _translationCache = new();
+
+    /// <summary>
     /// 実際に使うバックエンド。
     /// </summary>
     /// <remarks>
@@ -810,6 +819,10 @@ public partial class MainWindow : Window, IDisposable
 
         _translationOptions = _translationOptions with { Backend = choice };
         _translationOptions.Save();
+
+        // 覚えている訳文はバックエンドごとに分かれているが、選択を変えた直後に
+        // 古い訳が出ると「切り替わっていない」と見える。まとめて忘れる。
+        _translationCache.Clear();
         RefreshTranslatorState();
 
         StatusText.Text = choice switch
@@ -1192,8 +1205,11 @@ public partial class MainWindow : Window, IDisposable
             // FR-TRN-06: クラウドが混雑・上限・通信不良なら静かにローカルへ切り替える。
             // 切り替え先が自分自身のときは渡さない（同じものを 2 回試しても無駄）。
             var translated = await LineTranslation
-                .TranslateAsync(ActiveTranslator, blocks, FallbackTranslator)
+                .TranslateAsync(ActiveTranslator, blocks, FallbackTranslator, _translationCache)
                 .ConfigureAwait(true);
+
+            // FR-TRN-08: 数値が合わない行には原文を併記する。
+            var overlayLines = BuildOverlayLines(blocks, translated);
 
             if (!translated.Translation.IsSuccess)
             {
@@ -1201,7 +1217,7 @@ public partial class MainWindow : Window, IDisposable
                     $"翻訳できませんでした: {ShortOutcome(translated.Translation.Outcome)}",
                     bounds, frame.Width, frame.Height, keepVisibleFor);
             }
-            else if (translated.LinesToOverlay.Count == 0)
+            else if (overlayLines.Count == 0)
             {
                 // 数値だけの画面や、既に日本語の画面。何も重ねないと「効いていない」と区別できない。
                 overlay.ShowMessage(
@@ -1210,7 +1226,7 @@ public partial class MainWindow : Window, IDisposable
             else
             {
                 // 訳して文字が変わった行だけを重ねる。数値だけの行や原文と同じ訳は重ねない。
-                overlay.ShowLines(translated.LinesToOverlay, bounds, frame.Width, frame.Height, keepVisibleFor);
+                overlay.ShowLines(overlayLines, bounds, frame.Width, frame.Height, keepVisibleFor);
             }
 
             OverlayHideButton.IsEnabled = true;
@@ -1269,6 +1285,77 @@ public partial class MainWindow : Window, IDisposable
     };
 
     /// <summary>
+    /// オーバーレイに重ねる行を作る（FR-TRN-08 の「原文併記」）。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>数値が合わない行だけ、訳文の下に原文を出す。</b>
+    /// 「ダメージ50」が「ダメージ60」になっても訳文としては自然で、読んでも気づけない。
+    /// <b>気づける形にするのが対処</b>（RULES.md 🟡-7 / FR-TRN-08）。</para>
+    /// <para>全行に併記しないのは、画面を覆う面積が倍になるため（判断基準の 2 位）。
+    /// 合っている行まで併記すると、警告としての意味も薄れる。</para>
+    /// </remarks>
+    private static List<OcrLine> BuildOverlayLines(
+        List<OcrLine> sources, LineTranslationResult translated)
+    {
+        var result = new List<OcrLine>(translated.Lines.Count);
+
+        for (var i = 0; i < translated.Lines.Count; i++)
+        {
+            if (translated.Statuses[i] != LineTranslationStatus.Translated)
+            {
+                continue;
+            }
+
+            var line = translated.Lines[i];
+            if (i < translated.NumberChecks.Count && !translated.NumberChecks[i].IsConsistent)
+            {
+                // 文字の大きさは変えない（SourceLineCount はそのまま）。札が 1 行分高くなるだけ。
+                line = line with { Text = line.Text + "\n" + sources[i].Text };
+            }
+
+            result.Add(line);
+        }
+
+        return result;
+    }
+
+    /// <summary>数値の照合の結果を 1 行にまとめる（FR-TRN-08）。</summary>
+    private static string DescribeNumberChecks(
+        List<OcrLine> sources, LineTranslationResult translated)
+    {
+        var mismatched = translated.NumberMismatchCount;
+        if (mismatched == 0)
+        {
+            return "食い違いなし";
+        }
+
+        var detail = new List<string>(mismatched);
+        for (var i = 0; i < translated.NumberChecks.Count; i++)
+        {
+            var check = translated.NumberChecks[i];
+            if (check.IsConsistent)
+            {
+                continue;
+            }
+
+            var parts = new List<string>(2);
+            if (check.Missing.Count > 0)
+            {
+                parts.Add($"落ちた {string.Join(",", check.Missing)}");
+            }
+
+            if (check.Added.Count > 0)
+            {
+                parts.Add($"増えた {string.Join(",", check.Added)}");
+            }
+
+            detail.Add($"「{sources[i].Text}」{string.Join(" / ", parts)}");
+        }
+
+        return $"★ {mismatched} 件が食い違い（原文を併記した） — {string.Join(" | ", detail)}";
+    }
+
+    /// <summary>
     /// 操作ウィンドウに内訳を出す。
     /// </summary>
     /// <remarks>
@@ -1323,9 +1410,13 @@ public partial class MainWindow : Window, IDisposable
                 $"検出           : {detectedCount} 行",
                 $"行結合         : {detectedCount} 行 → {source.Count} 件"
                     + $"（{source.Count(l => l.SourceLineCount > 1)} 件が結合・FR-TRN-10）",
-                $"翻訳に回した   : {translated.SentCount} 件（数値・記号だけの {source.Count - translated.SentCount} 件は除外）",
+                $"翻訳に回した   : {translated.SentCount} 件（数値・記号だけの {source.Count - translated.SentCount} 件は除外）"
+                    + (translated.CachedCount > 0
+                        ? $" / うち {translated.CachedCount} 件は記憶から（FR-TRN-09）"
+                        : string.Empty),
                 $"対応付け       : {translated.MappedCount}/{translated.SentCount} 件",
                 $"重ねた         : {translated.LinesToOverlay.Count} 件（訳して文字が変わったものだけ）",
+                $"数値の照合     : {DescribeNumberChecks(source, translated)}",
                 string.Empty,
                 $"撮影           : {captureMs,6:F0} ms",
                 $"OCR            : {ocrMs,6:F0} ms",

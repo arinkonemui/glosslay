@@ -108,6 +108,19 @@ internal static class Program
             return CheckSelection();
         }
 
+        // --numbers: FR-TRN-08 の数値照合を確かめる。モデルを読まない。
+        if (args.Contains("--numbers", StringComparer.Ordinal))
+        {
+            return CheckNumbers();
+        }
+
+        // --cache: FR-TRN-09 の使い回しを確かめる。
+        if (args.Contains("--cache", StringComparer.Ordinal))
+        {
+            await CheckCacheAsync(translator).ConfigureAwait(false);
+            return 0;
+        }
+
         // --fallback: FR-TRN-06 の切り替えを確かめる。
         // クラウドの失敗を待たずに済むよう、必ず失敗するバックエンドを使う。
         if (args.Contains("--fallback", StringComparer.Ordinal))
@@ -230,6 +243,107 @@ internal static class Program
         public void Dispose()
         {
         }
+    }
+
+    /// <summary>
+    /// FR-TRN-08「原文の数値を抽出し訳文と照合」の確認。
+    /// </summary>
+    /// <remarks>
+    /// <b>見逃しと騒ぎすぎの両方を見る。</b>
+    /// 騒ぎすぎる照合は、やがて誰にも読まれなくなる。
+    /// </remarks>
+    private static int CheckNumbers()
+    {
+        (string Label, string Source, string Translated, bool Consistent)[] cases =
+        [
+            ("そのまま残った",        "Deal 50 damage.",            "50 ダメージを与える。",        true),
+            ("書き換わった",          "Deal 50 damage.",            "60 ダメージを与える。",        false),
+            ("落ちた",                "Cooldown: 15s",              "クールダウン",                 false),
+            ("作られた",              "Discard all Energy.",        "エネルギーを 3 枚捨てる。",    false),
+            ("桁区切りの違い",        "2,430 coins",                "2430 コイン",                  true),
+            ("全角の数字",            "HP 270",                     "ＨＰ ２７０",                  true),
+            ("小数と記号",            "increases by 3.50%.",        "3.50% 増加する。",             true),
+            ("負の値",                "resistance -30",             "抵抗 -30",                     true),
+            ("負の値が符号を失う",    "resistance -30",             "抵抗 30",                      false),
+            ("型番の区切りは符号でない", "ISV-CI-DSB3 node",         "ISV-CI-DSB3 ノード",           true),
+            ("分数表記",              "0/5 complete",               "0/5 完了",                     true),
+            ("文末の句点を拾わない",  "It does 90 damage.",         "90 ダメージを与える",          true),
+            ("数値なし",              "Attack Power",               "攻撃力",                       true),
+        ];
+
+        Console.WriteLine("=== FR-TRN-08 数値の照合 ===");
+        var failures = 0;
+
+        foreach (var (label, source, translated, want) in cases)
+        {
+            var check = NumberVerifier.Compare(source, translated);
+            var ok = check.IsConsistent == want;
+            if (!ok)
+            {
+                failures++;
+            }
+
+            var detail = check.IsConsistent
+                ? "一致"
+                : $"落ちた[{string.Join(",", check.Missing)}] 増えた[{string.Join(",", check.Added)}]";
+
+            Console.WriteLine($"  {(ok ? "  " : "★ ")}{label,-24} {detail,-34} "
+                              + $"（期待 {(want ? "一致" : "不一致")}）");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine(failures == 0 ? "すべて期待どおり。" : $"★ {failures} 件が期待と違う。");
+        return failures == 0 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// FR-TRN-09「同一原文の翻訳結果をキャッシュする」の確認。
+    /// </summary>
+    /// <remarks>
+    /// <b>速くなるだけでなく、同じ訳文が返ることまで見る。</b>
+    /// 使い回しで別の訳が出るなら、覚えている意味がない。
+    /// </remarks>
+    private static async Task CheckCacheAsync(LocalNmtTranslator local)
+    {
+        OcrLine[] lines =
+        [
+            new("Attack Power", 1f, new OcrBox(0, 0, 100, 20)),
+            new("Evolves from Eevee", 1f, new OcrBox(0, 30, 100, 20)),
+            new("During your next turn, this Pokemon can't attack.", 1f, new OcrBox(0, 60, 400, 20)),
+        ];
+
+        var cache = new TranslationCache();
+
+        var first = await LineTranslation.TranslateAsync(local, lines, cache: cache).ConfigureAwait(false);
+        var second = await LineTranslation.TranslateAsync(local, lines, cache: cache).ConfigureAwait(false);
+
+        Console.WriteLine("=== FR-TRN-09 使い回しの確認 ===");
+        Console.WriteLine($"  1 回目  記憶から {first.CachedCount}/{first.SentCount} 件  "
+                          + $"{first.Translation.Elapsed.TotalMilliseconds:F0} ms");
+        Console.WriteLine($"  2 回目  記憶から {second.CachedCount}/{second.SentCount} 件  "
+                          + $"{second.Translation.Elapsed.TotalMilliseconds:F0} ms");
+        Console.WriteLine($"  覚えた件数: {cache.Count}");
+        Console.WriteLine();
+
+        var same = true;
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var a = first.Lines[i].Text;
+            var b = second.Lines[i].Text;
+            same &= string.Equals(a, b, StringComparison.Ordinal);
+            Console.WriteLine($"    {lines[i].Text}");
+            Console.WriteLine($"      1 回目 → {a}");
+            Console.WriteLine($"      2 回目 → {b}");
+        }
+
+        Console.WriteLine();
+        var ok = first.CachedCount == 0
+                 && second.CachedCount == second.SentCount
+                 && second.Translation.Elapsed == TimeSpan.Zero
+                 && same;
+        Console.WriteLine(ok
+            ? "期待どおり。2 回目は呼び出さず、同じ訳文を返した。"
+            : "★ 期待と違う。");
     }
 
     /// <summary>

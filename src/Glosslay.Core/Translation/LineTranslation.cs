@@ -50,6 +50,25 @@ public sealed record LineTranslationResult(
     /// どちらで訳したかは UI に出す。</para>
     /// </remarks>
     public TranslationResult? FellBackFrom { get; init; }
+
+    /// <summary>
+    /// 覚えていた訳文を使い回した件数（FR-TRN-09）。
+    /// </summary>
+    /// <remarks>
+    /// <b>呼び出しを減らせていることを目で確かめるために出す。</b>
+    /// RULES.md 🟡-8 は「予期しない課金を発生させない」を求めており、
+    /// 効いているかどうかが見えない対策は確かめようがない。
+    /// </remarks>
+    public int CachedCount { get; init; }
+
+    /// <summary>
+    /// 行ごとの数値の突き合わせ（FR-TRN-08）。<see cref="Lines"/> と同じ並び。
+    /// </summary>
+    /// <remarks>訳していない行は <see cref="NumberCheck.NotChecked"/>。</remarks>
+    public IReadOnlyList<NumberCheck> NumberChecks { get; init; } = [];
+
+    /// <summary>数値が食い違った行の数。</summary>
+    public int NumberMismatchCount => NumberChecks.Count(c => !c.IsConsistent);
     /// <summary>
     /// オーバーレイに重ねる行。
     /// </summary>
@@ -101,12 +120,17 @@ public static partial class LineTranslation
     /// （<see cref="ITranslator.TranslatesLineByLine"/>）。
     /// 外側で訳文だけを差し替えることはできない。
     /// </param>
+    /// <param name="cache">
+    /// 訳文の使い回し（FR-TRN-09 / RULES.md 🟡-8）。<c>null</c> なら使わない。
+    /// <b>覚えているブロックは依頼から外す。</b>全部覚えていれば呼び出し自体を行わない。
+    /// </param>
     /// <param name="targetLanguage">訳文の言語。</param>
     /// <param name="cancellationToken">キャンセル。</param>
     public static async Task<LineTranslationResult> TranslateAsync(
         ITranslator translator,
         IReadOnlyList<OcrLine> lines,
         ITranslator? fallback = null,
+        TranslationCache? cache = null,
         string targetLanguage = "ja",
         CancellationToken cancellationToken = default)
     {
@@ -140,26 +164,67 @@ public static partial class LineTranslation
         // 行の中の改行は対応を壊すため、どちらの経路でも空白に潰す。
         var sources = sent.Select(i => lines[i].Text.ReplaceLineEndings(" ")).ToList();
 
-        var attempt = await SendAsync(translator, sources, targetLanguage, cancellationToken)
-            .ConfigureAwait(false);
-
-        // FR-TRN-06: 混雑・上限・通信不良なら静かに切り替える。
-        // キー未登録と非対応は切り替えても同じ結果になるため含めない（ShouldFallBack）。
-        TranslationResult? failed = null;
-        if (fallback is not null && attempt.Result.ShouldFallBack)
+        // FR-TRN-09: 覚えているものは依頼から外す。
+        var translated = new string?[sent.Count];
+        var ask = new List<int>(sent.Count);
+        var cached = 0;
+        for (var n = 0; n < sources.Count; n++)
         {
-            var second = await SendAsync(fallback, sources, targetLanguage, cancellationToken)
-                .ConfigureAwait(false);
-
-            if (second.Result.IsSuccess)
+            if (cache is not null
+                && cache.TryGet(sources[n], targetLanguage, translator.Name, out var remembered))
             {
-                failed = attempt.Result;
-                attempt = second;
-                translator = fallback;
+                translated[n] = remembered;
+                cached++;
+            }
+            else
+            {
+                ask.Add(n);
             }
         }
 
-        var translated = attempt.Translated;
+        TranslationResult? failed = null;
+        TranslationResult result;
+
+        if (ask.Count == 0)
+        {
+            // 全部覚えていた。呼び出さない（RULES.md 🟡-8）。押し直しがここに来る。
+            result = new TranslationResult(string.Empty, TranslationOutcome.Succeeded, TimeSpan.Zero);
+        }
+        else
+        {
+            var asked = ask.Select(n => sources[n]).ToList();
+            var attempt = await SendAsync(translator, asked, targetLanguage, cancellationToken)
+                .ConfigureAwait(false);
+
+            // FR-TRN-06: 混雑・上限・通信不良なら静かに切り替える。
+            // キー未登録と非対応は切り替えても同じ結果になるため含めない（ShouldFallBack）。
+            if (fallback is not null && attempt.Result.ShouldFallBack)
+            {
+                var second = await SendAsync(fallback, asked, targetLanguage, cancellationToken)
+                    .ConfigureAwait(false);
+
+                if (second.Result.IsSuccess)
+                {
+                    failed = attempt.Result;
+                    attempt = second;
+                    translator = fallback;
+                }
+            }
+
+            result = attempt.Result;
+            for (var k = 0; k < ask.Count; k++)
+            {
+                var n = ask[k];
+                translated[n] = attempt.Translated[k];
+
+                // 失敗は覚えない。混雑や通信不良は次に成功しうる。
+                if (cache is not null && attempt.Translated[k] is { Length: > 0 } text)
+                {
+                    cache.Set(sources[n], targetLanguage, translator.Name, text);
+                }
+            }
+        }
+
         var output = lines.ToList();
 
         for (var n = 0; n < sent.Count; n++)
@@ -180,10 +245,23 @@ public static partial class LineTranslation
             }
         }
 
-        return new LineTranslationResult(output, statuses, attempt.Result)
+        // FR-TRN-08: 訳した行だけ、原文の数値が残っているか突き合わせる。
+        var checks = new NumberCheck[lines.Count];
+        Array.Fill(checks, NumberCheck.NotChecked);
+        for (var i = 0; i < lines.Count; i++)
+        {
+            if (statuses[i] == LineTranslationStatus.Translated)
+            {
+                checks[i] = NumberVerifier.Compare(lines[i].Text, output[i].Text);
+            }
+        }
+
+        return new LineTranslationResult(output, statuses, result)
         {
             Backend = translator.Name,
             FellBackFrom = failed,
+            CachedCount = cached,
+            NumberChecks = checks,
         };
     }
 
