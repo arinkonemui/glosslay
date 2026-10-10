@@ -6,7 +6,9 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using Glosslay.Ads;
 using Glosslay.Capture;
+using Glosslay.Entitlement;
 using Glosslay.Configuration;
 using Glosslay.Imaging;
 using Glosslay.Input;
@@ -40,13 +42,27 @@ public partial class MainWindow : Window, IDisposable
     /// gemini.json を編集したら作り直すため、フィールドは差し替え可能にしている。
     /// </remarks>
 #pragma warning disable CA1859 // 具象型の方が速いが、ここは差し替え点（RULES.md 🟡-2）。
-    private ITranslator _cloudTranslator = new GeminiTranslator();
+    private ITranslator _cloudTranslator;
 #pragma warning restore CA1859
 
     /// <summary>
     /// キー登録なしで動く既定のバックエンド（FR-TRN-02 / RULES.md 🟡-1）。
     /// </summary>
     private readonly LocalNmtTranslator _localTranslator = new();
+
+    /// <summary>
+    /// 機能ゲートの判定（FR-SYS-10 / RULES.md 🟡-4）。v1.0 は常に無料版・上限なし。
+    /// </summary>
+    private readonly IEntitlementService _entitlements = FreeOnlyEntitlementService.Default;
+
+    /// <summary>
+    /// 遠隔から更新できる設定（FR-TRN-07 / FR-ADS-02 / RULES.md 🟡-3）。
+    /// </summary>
+    /// <remarks>v1.0 は既定値のみ。署名付き取得は未実装。</remarks>
+    private readonly IRemoteConfig _remoteConfig = BuiltInRemoteConfig.Default;
+
+    /// <summary>広告（FR-ADS）。v1.0 は何も描画しない。</summary>
+    private readonly IAdProvider _adProvider = NullAdProvider.Default;
 
     /// <summary>どのバックエンドを使うかの選択（FR-TRN-01 / FR-TRN-06）。</summary>
     private TranslationOptions _translationOptions = TranslationOptions.Load();
@@ -105,13 +121,16 @@ public partial class MainWindow : Window, IDisposable
     private Point _dragOrigin;
     private bool _isDragging;
 
-    /// <summary>画面を翻訳するキーの検出。設定が読めなければ null（そのキーなしで動く）。</summary>
-    private HotkeyDetector? _translateHotkey;
-
-    /// <summary>オーバーレイの表示を ON/OFF するキーの検出（FR-OVL-08）。</summary>
-    private HotkeyDetector? _toggleHotkey;
-
-    private HotkeyDetector? _cursorHotkey;
+    /// <summary>
+    /// 翻訳を起こす入力（FR-INP-01 / RULES.md 🟡-2）。
+    /// </summary>
+    /// <remarks>
+    /// v0.5 でゲームパッド（Windows.Gaming.Input・読み取りのみ）を足すときは、
+    /// ここを差し替えるか、複数のトリガーを並べる。
+    /// </remarks>
+#pragma warning disable CA1859 // 具象型の方が速いが、ここは差し替え点（RULES.md 🟡-2）。
+    private IInputTrigger? _inputTrigger;
+#pragma warning restore CA1859
 
     /// <summary><c>WM_INPUT</c> を受け取るためのフック先。</summary>
     private HwndSource? _hwndSource;
@@ -128,8 +147,28 @@ public partial class MainWindow : Window, IDisposable
     public MainWindow()
     {
         InitializeComponent();
+        _cloudTranslator = CreateCloudTranslator();
         Loaded += OnLoaded;
         Closed += OnWindowClosed;
+    }
+
+    /// <summary>
+    /// クラウド翻訳を作る。
+    /// </summary>
+    /// <remarks>
+    /// <b>モデル名はコードに埋めない</b>（FR-TRN-07 / RULES.md 🟡-3）。
+    /// 利用者の <c>gemini.json</c> を基本とし、<b>遠隔設定に推奨モデルがあればそちらを使う。</b>
+    /// LLM は世代交代が速く、提供終了のたびに再ビルドが必要な作りにしてはいけない。
+    /// </remarks>
+    private GeminiTranslator CreateCloudTranslator()
+    {
+        var options = GeminiOptions.Load();
+        if (_remoteConfig.Current.RecommendedGeminiModel is { Length: > 0 } recommended)
+        {
+            options = options with { Model = recommended };
+        }
+
+        return new GeminiTranslator(options);
     }
 
     /// <summary>
@@ -141,88 +180,39 @@ public partial class MainWindow : Window, IDisposable
         StartHotkey();
     }
 
-    private void StartHotkey()
+private void StartHotkey()
     {
-        var options = HotkeyOptions.Load();
-        var problems = new List<string>();
+        // FR-INP-01 / RULES.md 🟡-2: 入力はインターフェース越しに扱う。
+        // 設定の誤りでアプリ全体を止めない。使えない割り当てだけ無効にして理由を見せる。
+        var trigger = new RawInputTrigger();
+        _inputTrigger = trigger;
 
-        // 設定の誤りでアプリ全体を止めない。使えないキーだけ無効にして理由を見せる。
-        var translate = ParseGesture(options.TranslateScreen, "翻訳キー", problems);
-        var cursor = ParseGesture(options.TranslateCursor, "カーソル翻訳キー", problems);
-        var toggle = ParseGesture(options.ToggleOverlay, "ON/OFF キー", problems);
-
-        // 同じ組み合わせだと、1 回押すたびに両方が走る。後に出てきた方を無効にする。
-        cursor = RejectDuplicate(cursor, [translate], "カーソル翻訳キー", problems);
-        toggle = RejectDuplicate(toggle, [translate, cursor], "ON/OFF キー", problems);
-
-        if (translate is null && cursor is null && toggle is null)
+        if (!trigger.IsActive)
         {
-            HotkeyText.Text = "ホットキー無効: " + string.Join(" ", problems);
+            HotkeyText.Text = "ホットキー無効: " + string.Join(" ", trigger.Problems);
             return;
         }
+
+        trigger.Fired += OnTriggerFired;
 
         var handle = new WindowInteropHelper(this).Handle;
         _hwndSource = HwndSource.FromHwnd(handle);
         _hwndSource.AddHook(OnWindowMessage);
+        trigger.Attach(handle);
 
-        RawKeyboard.Register(handle);
-        _translateHotkey = translate is { } translateGesture ? new HotkeyDetector(translateGesture) : null;
-        _cursorHotkey = cursor is { } cursorGesture ? new HotkeyDetector(cursorGesture) : null;
-        _toggleHotkey = toggle is { } toggleGesture ? new HotkeyDetector(toggleGesture) : null;
-
-        var descriptions = new List<string>();
-        if (translate is { } tg)
-        {
-            descriptions.Add($"{tg} — 前面の画面を翻訳して、原文の位置に重ねる");
-        }
-
-        if (cursor is { } cg)
-        {
-            descriptions.Add(
-                $"{cg} — カーソルの周囲 {CursorRegion.DefaultWidth}x{CursorRegion.DefaultHeight} だけを翻訳する");
-        }
-
-        if (toggle is { } og)
-        {
-            descriptions.Add($"{og} — 訳文を消す / 最後の訳文を出し直す");
-        }
-
-        HotkeyText.Text = string.Join(Environment.NewLine, [.. descriptions, .. problems]);
+        HotkeyText.Text = string.Join(
+            Environment.NewLine, [.. trigger.Descriptions, .. trigger.Problems]);
     }
 
-    /// <summary>設定の文字列を組み合わせに直す。読めなければ理由を積んで null を返す。</summary>
-    private static HotkeyGesture? ParseGesture(string text, string label, List<string> problems)
+    /// <summary>割り当てが発動した。</summary>
+    private void OnTriggerFired(InputAction action) => _ = RunGuardedAsync(action switch
     {
-        if (HotkeyGesture.TryParse(text, out var gesture))
-        {
-            return gesture;
-        }
+        InputAction.TranslateCursor => TranslateCursorAsync,
+        InputAction.ToggleOverlay => ToggleOverlayAsync,
+        _ => TranslateScreenAsync,
+    });
 
-        problems.Add($"hotkeys.json の{label}「{text}」を解釈できません。");
-        return null;
-    }
-
-    /// <summary>既に使われている組み合わせなら無効にする。</summary>
-    private static HotkeyGesture? RejectDuplicate(
-        HotkeyGesture? gesture, ReadOnlySpan<HotkeyGesture?> taken, string label, List<string> problems)
-    {
-        if (gesture is null)
-        {
-            return null;
-        }
-
-        foreach (var other in taken)
-        {
-            if (other == gesture)
-            {
-                problems.Add($"{label}が他のキーと同じ組み合わせのため、無効にしました。");
-                return null;
-            }
-        }
-
-        return gesture;
-    }
-
+    
     /// <summary>
     /// <c>WM_INPUT</c> を拾ってホットキーを判定する。
     /// </summary>
@@ -235,28 +225,10 @@ public partial class MainWindow : Window, IDisposable
     /// </remarks>
     private nint OnWindowMessage(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
     {
-        if (msg != RawKeyboard.WmInput || !RawKeyboard.TryRead(lParam, out var virtualKey, out var isKeyUp))
-        {
-            return 0;
-        }
-
-        // すべての検出器に同じ入力を必ず渡す。修飾キーの押下状態はそれぞれが持っているため、
-        // 一部にしか渡さないと、渡さなかった側の Ctrl / Shift の状態がずれる。
-        if (_translateHotkey?.Process(virtualKey, isKeyUp) == true)
-        {
-            _ = RunGuardedAsync(TranslateScreenAsync);
-        }
-
-        if (_cursorHotkey?.Process(virtualKey, isKeyUp) == true)
-        {
-            _ = RunGuardedAsync(TranslateCursorAsync);
-        }
-
-        if (_toggleHotkey?.Process(virtualKey, isKeyUp) == true)
-        {
-            _ = RunGuardedAsync(ToggleOverlayAsync);
-        }
-
+        // 判定はトリガー側の仕事。ここはメッセージを渡すだけ。
+        // ウィンドウメッセージを要るのはキーボードだけなので、型で絞る。
+        // ゲームパッド（Windows.Gaming.Input）に差し替えたときは null になり、何もしないのが正しい。
+        (_inputTrigger as RawInputTrigger)?.ProcessMessage(msg, lParam);
         return 0;
     }
 
@@ -327,15 +299,12 @@ public partial class MainWindow : Window, IDisposable
     /// <summary>キャプチャセッションと OCR エンジンを解放する。ウィンドウを閉じたときに呼ぶ。</summary>
     public void Dispose()
     {
-        if (_hwndSource is not null)
-        {
-            RawKeyboard.Unregister();
-            _hwndSource.RemoveHook(OnWindowMessage);
-            _hwndSource = null;
-        }
+        _hwndSource?.RemoveHook(OnWindowMessage);
+        _hwndSource = null;
 
         ReleaseCapture();
         _overlay?.Close();
+        _inputTrigger?.Dispose();
         _ocrEngine.Dispose();
         _cloudTranslator.Dispose();
         _localTranslator.Dispose();
@@ -861,7 +830,7 @@ public partial class MainWindow : Window, IDisposable
 
         // 編集後に「更新」を押させるのは忘れるため、次の翻訳で必ず読み直す形にする。
         _cloudTranslator.Dispose();
-        _cloudTranslator = new GeminiTranslator();
+        _cloudTranslator = CreateCloudTranslator();
         RefreshTranslatorState();
 
         StatusText.Text = "gemini.json を開きました。保存すると次の翻訳から反映されます。";

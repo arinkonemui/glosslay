@@ -1,5 +1,9 @@
 using System.Diagnostics;
 using System.Text;
+using Glosslay.Ads;
+using Glosslay.Configuration;
+using Glosslay.Entitlement;
+using Glosslay.Input;
 using Glosslay.Ocr;
 using Glosslay.Translation;
 
@@ -106,6 +110,12 @@ internal static class Program
         if (args.Contains("--selection", StringComparer.Ordinal))
         {
             return CheckSelection();
+        }
+
+        // --services: 横断インターフェース（RULES.md 🟡-2 / 🟡-4）の配線を確かめる。モデルを読まない。
+        if (args.Contains("--services", StringComparer.Ordinal))
+        {
+            return CheckServices();
         }
 
         // --numbers: FR-TRN-08 の数値照合を確かめる。モデルを読まない。
@@ -243,6 +253,96 @@ internal static class Program
         public void Dispose()
         {
         }
+    }
+
+    /// <summary>
+    /// 横断インターフェースの配線を確かめる（RULES.md 🟡-2 / 🟡-4、FR-ADS、FR-SYS-10）。
+    /// </summary>
+    /// <remarks>
+    /// <b>v1.0 の実装は上限なし・広告なしなので、放っておくと「判定を通っているのか
+    /// 素通りしているのか」が区別できない。</b>上限を入れた実体を作って、ゲートが効くことを見る。
+    /// </remarks>
+    private static int CheckServices()
+    {
+        var failures = 0;
+
+        void Check(string label, bool actual, bool expected)
+        {
+            var ok = actual == expected;
+            if (!ok)
+            {
+                failures++;
+            }
+
+            Console.WriteLine($"  {(ok ? "  " : "★ ")}{label,-46} {(actual ? "はい" : "いいえ"),-6}"
+                              + $"（期待 {(expected ? "はい" : "いいえ")}）");
+        }
+
+        Console.WriteLine("=== 機能ゲート（IEntitlementService / RULES.md 🟡-4）===");
+        var free = FreeOnlyEntitlementService.Default;
+        Check("v1.0 は無料版", free.Tier == EntitlementTier.Free, true);
+        Check("v1.0 の上限は実質なし（プロファイル）",
+            free.MaxProfiles == FreeOnlyEntitlementService.Unlimited, true);
+        Check("v1.0 は広告を出す対象でない", free.ShowsAds, false);
+
+        var limited = new FreeOnlyEntitlementService(maxProfiles: 3, showsAds: true);
+        Check("上限を入れれば効く（3 件）", limited.MaxProfiles == 3, true);
+
+        Console.WriteLine();
+        Console.WriteLine("=== 遠隔設定（IRemoteConfig / FR-ADS-06）===");
+        var safe = BuiltInRemoteConfig.Default;
+        Check("取得できていなければ広告は無効", safe.Current.AdsEnabled, false);
+        Check("推奨モデルは未指定（利用者の設定を使う）",
+            safe.Current.RecommendedGeminiModel is null, true);
+
+        Console.WriteLine();
+        Console.WriteLine("=== 広告の判断（AdPolicy / FR-ADS-02・04・05）===");
+        var ads = NullAdProvider.Default;
+        var enabled = new BuiltInRemoteConfig(new RemoteSettings(AdsEnabled: true));
+
+        Check("v1.0 の既定では出さない",
+            AdPolicy.ShouldShow(AdSlot.Settings, free, safe, ads), false);
+        Check("遠隔設定が有効でも、描画できなければ出さない",
+            AdPolicy.ShouldShow(AdSlot.Settings, limited, enabled, ads), false);
+
+        var filling = new AlwaysFills();
+        Check("条件が揃えば出す",
+            AdPolicy.ShouldShow(AdSlot.Settings, limited, enabled, filling), true);
+        // v1.0 は契約者を作れない（FreeOnly は常に Free）。ここで見ているのは
+        // 「ShowsAds が false なら遠隔設定が有効でも出さない」という FR-ADS-04 の経路。
+        Check("広告の対象でなければ出さない（遠隔設定より優先）",
+            AdPolicy.ShouldShow(AdSlot.Settings, free, enabled, filling), false);
+        Check("遠隔設定が無効なら出さない",
+            AdPolicy.ShouldShow(AdSlot.Settings, limited, safe, filling), false);
+
+        Console.WriteLine();
+        Console.WriteLine("=== 入力（IInputTrigger / RULES.md 🔴-3）===");
+        using var trigger = new RawInputTrigger(new HotkeyOptions());
+        Check("既定の割り当てが有効", trigger.IsActive, true);
+        Check("割り当ての説明が 3 件", trigger.Descriptions.Count == 3, true);
+        Check("問題なし", trigger.Problems.Count == 0, true);
+
+        using var duplicated = new RawInputTrigger(new HotkeyOptions
+        {
+            TranslateScreen = "Ctrl+Shift+T",
+            TranslateCursor = "Ctrl+Shift+T",
+            ToggleOverlay = "まったく解釈できない",
+        });
+        Check("重複した割り当ては 1 つだけ残る", duplicated.Descriptions.Count == 1, true);
+        Check("重複と解釈不能の両方を伝える", duplicated.Problems.Count == 2, true);
+        Check("使える割り当てが残っていれば有効", duplicated.IsActive, true);
+
+        Console.WriteLine();
+        Console.WriteLine(failures == 0 ? "すべて期待どおり。" : $"★ {failures} 件が期待と違う。");
+        return failures == 0 ? 0 : 1;
+    }
+
+    /// <summary>常に枠を埋められる広告。判断の検査にだけ使う。</summary>
+    private sealed class AlwaysFills : IAdProvider
+    {
+        public string Name => "検査用";
+
+        public bool CanFill(AdSlot slot) => true;
     }
 
     /// <summary>
