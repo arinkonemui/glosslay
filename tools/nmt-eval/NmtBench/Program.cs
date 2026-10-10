@@ -3,6 +3,7 @@ using System.Text;
 using Glosslay.Ads;
 using Glosslay.Configuration;
 using Glosslay.Entitlement;
+using Glosslay.Capture;
 using Glosslay.Imaging;
 using Glosslay.Input;
 using Glosslay.Monitoring;
@@ -112,6 +113,12 @@ internal static class Program
         if (args.Contains("--selection", StringComparer.Ordinal))
         {
             return CheckSelection();
+        }
+
+        // --dwell: カーソル静止の判定（FR-MOD-10 / 11）を確かめる。モデルを読まない。
+        if (args.Contains("--dwell", StringComparer.Ordinal))
+        {
+            return CheckDwell();
         }
 
         // --watch: 自動監視の守り（FR-MOD-02 / 04 / 05 / FR-OCR-07）を確かめる。モデルを読まない。
@@ -261,6 +268,84 @@ internal static class Program
         public void Dispose()
         {
         }
+    }
+
+    /// <summary>
+    /// カーソル静止の判定を確かめる（FR-MOD-10 / FR-MOD-11）。
+    /// </summary>
+    /// <remarks>
+    /// <b>カーソルの移動に常時追従してはならない</b>（RULES.md 🟡-8）。
+    /// 動いている間は起こさず、止まってから 1 回だけ起こすことを、時計を進めて確かめる。
+    /// </remarks>
+    private static int CheckDwell()
+    {
+        var failures = 0;
+
+        void Check(string label, bool actual, bool expected)
+        {
+            var ok = actual == expected;
+            if (!ok)
+            {
+                failures++;
+            }
+
+            Console.WriteLine($"  {(ok ? "  " : "★ ")}{label,-44} {(actual ? "発動" : "しない"),-6}"
+                              + $"（期待 {(expected ? "発動" : "しない")}）");
+        }
+
+        var clock = new FakeClock(DateTimeOffset.UnixEpoch);
+        var options = new CursorModeOptions
+        {
+            DwellTime = TimeSpan.FromMilliseconds(400),
+            JitterTolerance = 4,
+        };
+        var detector = new CursorDwellDetector(options, clock);
+
+        Console.WriteLine("=== カーソル静止の判定（FR-MOD-10 / 11）===");
+
+        Check("最初の 1 回は数え始めるだけ", detector.Update(new ScreenPoint(100, 100)), false);
+
+        clock.Advance(TimeSpan.FromMilliseconds(399));
+        Check("400ms に満たなければ起こさない", detector.Update(new ScreenPoint(100, 100)), false);
+
+        clock.Advance(TimeSpan.FromMilliseconds(2));
+        Check("400ms を超えたら起こす", detector.Update(new ScreenPoint(100, 100)), true);
+
+        clock.Advance(TimeSpan.FromSeconds(10));
+        Check("止まり続けても 2 度は起こさない", detector.Update(new ScreenPoint(100, 100)), false);
+
+        Check("手ぶれ（3px）は動いたと見ない", detector.Update(new ScreenPoint(102, 102)), false);
+
+        clock.Advance(TimeSpan.FromSeconds(10));
+        Check("手ぶれのままでも起こし直さない", detector.Update(new ScreenPoint(101, 101)), false);
+
+        Console.WriteLine();
+        Console.WriteLine("=== 動かしてから止め直す ===");
+        Check("動かした直後は起こさない", detector.Update(new ScreenPoint(400, 400)), false);
+
+        clock.Advance(TimeSpan.FromMilliseconds(401));
+        Check("止め直せば起こす", detector.Update(new ScreenPoint(400, 400)), true);
+
+        Console.WriteLine();
+        Console.WriteLine("=== 動かし続ける（常時追従しない）===");
+        var moving = new CursorDwellDetector(options, clock);
+        var firedWhileMoving = false;
+        for (var i = 0; i < 50; i++)
+        {
+            clock.Advance(TimeSpan.FromMilliseconds(100));
+            firedWhileMoving |= moving.Update(new ScreenPoint(i * 20, i * 20));
+        }
+
+        Check("5 秒動かし続けても一度も起こさない", firedWhileMoving, false);
+
+        Console.WriteLine();
+        Console.WriteLine("=== 切り替え直後 ===");
+        detector.Reset();
+        Check("Reset の直後は起こさない", detector.Update(new ScreenPoint(400, 400)), false);
+
+        Console.WriteLine();
+        Console.WriteLine(failures == 0 ? "すべて期待どおり。" : $"★ {failures} 件が期待と違う。");
+        return failures == 0 ? 0 : 1;
     }
 
     /// <summary>

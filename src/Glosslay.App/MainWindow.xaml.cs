@@ -104,6 +104,25 @@ public partial class MainWindow : Window, IDisposable
     /// <summary>自動監視の設定（FR-MOD-02 / 03 / 04）。</summary>
     private AutoWatchOptions _watchOptions = AutoWatchOptions.Load();
 
+    /// <summary>カーソル位置モードの設定（FR-MOD-10〜12 / 14）。</summary>
+    private CursorModeOptions _cursorOptions = CursorModeOptions.Load();
+
+    /// <summary>
+    /// 自動で起こす翻訳の呼び出し上限（FR-MOD-04 / FR-MOD-13）。
+    /// </summary>
+    /// <remarks>
+    /// <b>自動監視とカーソル静止で 1 つを共有する。</b>別々に持つと、
+    /// 両方を使ったときに合算で 2 倍まで呼べてしまい、歯止めの意味が薄れる。
+    /// <b>手動のホットキーは数えない</b>（利用者が押した回数だけなので暴走しない）。
+    /// </remarks>
+    private readonly CallRateLimiter _autoCallLimiter = new(AutoWatchOptions.Load().MaxCallsPerHour);
+
+    /// <summary>カーソル静止の判定（FR-MOD-10 / 11）。</summary>
+    private CursorDwellDetector? _dwellDetector;
+
+    /// <summary>カーソルの見回り。</summary>
+    private DispatcherTimer? _dwellTimer;
+
     /// <summary>自動監視の判断。止める条件と呼び出し上限を持つ。</summary>
     private AutoWatchGate? _watchGate;
 
@@ -274,8 +293,7 @@ private void StartHotkey()
             return;
         }
 
-        _watchGate = new AutoWatchGate(
-            _watchOptions, new CallRateLimiter(_watchOptions.MaxCallsPerHour));
+        _watchGate = new AutoWatchGate(_watchOptions, _autoCallLimiter);
 
         _watchTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
@@ -353,6 +371,89 @@ private void StartHotkey()
     private void OnAutoWatchChanged(object sender, RoutedEventArgs e) =>
         SetAutoWatch(AutoWatchCheck.IsChecked == true);
 
+    /// <summary>
+    /// カーソル静止での発動を始める / 止める（FR-MOD-10 / 14）。
+    /// </summary>
+    /// <remarks>
+    /// <b>見回るのはカーソルの座標だけ。</b>撮影も OCR もしない。
+    /// 止まったと判定したときに初めて、ホットキーと同じ経路を通す。
+    /// </remarks>
+    private void SetCursorDwell(bool enabled)
+    {
+        _cursorOptions = _cursorOptions with
+        {
+            Enabled = enabled,
+            Trigger = enabled ? CursorTrigger.Dwell : CursorTrigger.Hotkey,
+        };
+        _cursorOptions.Save();
+
+        _dwellTimer?.Stop();
+        _dwellTimer = null;
+        _dwellDetector = null;
+
+        if (!enabled)
+        {
+            StatusText.Text = "カーソル静止: 停止しました（ホットキーでの翻訳は使えます）。";
+            return;
+        }
+
+        _dwellDetector = new CursorDwellDetector(_cursorOptions);
+
+        // 静止の判定そのものより細かく見ないと、止まった瞬間を取り逃す。
+        var interval = TimeSpan.FromMilliseconds(
+            Math.Max(50, _cursorOptions.DwellTime.TotalMilliseconds / 4));
+
+        _dwellTimer = new DispatcherTimer(DispatcherPriority.Background) { Interval = interval };
+        _dwellTimer.Tick += OnDwellTick;
+        _dwellTimer.Start();
+
+        StatusText.Text =
+            $"カーソル静止: 開始。{_cursorOptions.DwellTime.TotalMilliseconds:F0} ms 止めると"
+            + $" 周囲 {_cursorOptions.Width}x{_cursorOptions.Height} を翻訳します。";
+    }
+
+    /// <summary>カーソルの見回り 1 回分。</summary>
+    private async void OnDwellTick(object? sender, EventArgs e)
+    {
+        if (_dwellDetector is null || _isTranslatingScreen)
+        {
+            return;
+        }
+
+        if (!CursorPosition.TryGet(out var cursor) || !_dwellDetector.Update(cursor))
+        {
+            return;
+        }
+
+        // ここから先は「止まった」と決まった後。止める条件を先に見る。
+        var target = ResolveHotkeyTarget();
+        if (target is null)
+        {
+            return;
+        }
+
+        // ゲームが前面にないなら起こさない。別のアプリを触っている間に
+        // カーソルを止めただけで翻訳が走るのは予期しない呼び出しになる。
+        if (target.Kind == CaptureTargetKind.Window && !WindowFocus.IsForeground(target.Handle))
+        {
+            return;
+        }
+
+        // FR-MOD-13: カーソル位置モードにも呼び出し上限を必ず適用する。
+        if (!_autoCallLimiter.TryTake())
+        {
+            StatusText.Text =
+                $"カーソル静止: 1 時間あたり {_watchOptions.MaxCallsPerHour} 回の上限に達しました。"
+                + $"約 {_autoCallLimiter.TimeUntilNext.TotalMinutes:F0} 分後に再開します。";
+            return;
+        }
+
+        await RunGuardedAsync(TranslateCursorAsync).ConfigureAwait(true);
+    }
+
+    private void OnCursorDwellChanged(object sender, RoutedEventArgs e) =>
+        SetCursorDwell(CursorDwellCheck.IsChecked == true);
+
     /// <summary>キャプチャ画像の保存先（FR-CFG-00）。</summary>
     private static string CaptureDirectory => GlosslayPaths.Captures;
 
@@ -425,6 +526,8 @@ private void StartHotkey()
 
         _watchTimer?.Stop();
         _watchTimer = null;
+        _dwellTimer?.Stop();
+        _dwellTimer = null;
         ReleaseCapture();
         _overlay?.Close();
         _inputTrigger?.Dispose();
@@ -1258,7 +1361,10 @@ private void StartHotkey()
             FrameRect? window = null;
             if (useCursorWindow)
             {
-                if (!CursorRegion.TryResolve(cursor, bounds, frame.Width, frame.Height, out var resolved))
+                // FR-MOD-12: 読み取る範囲は設定値（既定 640x480 は暫定。PLAN.md 課題3）。
+                if (!CursorRegion.TryResolve(
+                        cursor, bounds, frame.Width, frame.Height,
+                        _cursorOptions.Width, _cursorOptions.Height, out var resolved))
                 {
                     overlay.ShowMessage(
                         "カーソルが対象の画面の外にあります", bounds, frame.Width, frame.Height, keepVisibleFor);

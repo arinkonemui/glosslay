@@ -148,6 +148,15 @@
                 </StackPanel>
             </GroupBox>
 
+            <GroupBox Header="カーソル位置モード (FR-MOD-09〜14)">
+                <StackPanel>
+                    <CheckBox x:Name="CursorDwellCheck" Content="カーソルを止めたら自動で翻訳する"
+                              Checked="OnCursorDwellChanged" Unchecked="OnCursorDwellChanged" />
+                    <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,4,0,0"
+                               Text="カードに合わせて説明を読む操作に向きます。止まってから 400ms で 1 回だけ発動し、動かし続けている間は何もしません。OFF にしてもホットキーでの翻訳は使えます (FR-MOD-14)。呼び出し上限は自動監視と共有します。設定は cursormode.json で。" />
+                </StackPanel>
+            </GroupBox>
+
             <GroupBox Header="対象">
                 <!-- 高さを固定する。スクロール内で * を使うと高さが決まらない。 -->
                 <ListBox x:Name="TargetList" Height="170" DisplayMemberPath="DisplayName"
