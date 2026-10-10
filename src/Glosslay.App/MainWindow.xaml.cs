@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Threading;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Glosslay.Ads;
@@ -12,6 +13,7 @@ using Glosslay.Entitlement;
 using Glosslay.Configuration;
 using Glosslay.Imaging;
 using Glosslay.Input;
+using Glosslay.Monitoring;
 using Glosslay.Ocr;
 using Glosslay.Translation;
 
@@ -98,6 +100,15 @@ public partial class MainWindow : Window, IDisposable
     /// </remarks>
     private ITranslator? FallbackTranslator =>
         TranslatorSelection.Fallback(_translationOptions.Backend, _cloudTranslator, _localTranslator);
+
+    /// <summary>自動監視の設定（FR-MOD-02 / 03 / 04）。</summary>
+    private AutoWatchOptions _watchOptions = AutoWatchOptions.Load();
+
+    /// <summary>自動監視の判断。止める条件と呼び出し上限を持つ。</summary>
+    private AutoWatchGate? _watchGate;
+
+    /// <summary>自動監視の見回り。</summary>
+    private DispatcherTimer? _watchTimer;
 
     /// <summary>ラジオへ選択を反映している間、Checked の処理を止める。</summary>
     private bool _suppressBackendChange;
@@ -232,6 +243,116 @@ private void StartHotkey()
         return 0;
     }
 
+    /// <summary>
+    /// 自動監視を始める / 止める（FR-MOD-02）。
+    /// </summary>
+    /// <remarks>
+    /// <b>既定は OFF。</b>勝手に呼び出し続ける機能を、利用者が知らないうちに動かさない
+    /// （RULES.md 🟡-8）。
+    /// </remarks>
+    private void SetAutoWatch(bool enabled)
+    {
+        _watchOptions = _watchOptions with { Enabled = enabled };
+        _watchOptions.Save();
+
+        _watchTimer?.Stop();
+        _watchTimer = null;
+        _watchGate = null;
+
+        if (!enabled)
+        {
+            StatusText.Text = "自動監視: 停止しました。";
+            return;
+        }
+
+        // FR-SYS-10 / RULES.md 🟡-4: 同時に監視できる領域の数はエンタイトルメントで決まる。
+        // いまの実装は 1 領域だけなので、上限が 1 以上であれば足りる。
+        if (_entitlements.MaxWatchedRegions < 1)
+        {
+            StatusText.Text = "自動監視: このプランでは利用できません。";
+            AutoWatchCheck.IsChecked = false;
+            return;
+        }
+
+        _watchGate = new AutoWatchGate(
+            _watchOptions, new CallRateLimiter(_watchOptions.MaxCallsPerHour));
+
+        _watchTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = _watchOptions.Interval,
+        };
+        _watchTimer.Tick += OnWatchTick;
+        _watchTimer.Start();
+
+        StatusText.Text = _region is null
+            ? "自動監視: 開始（画面全体）。プレビューをドラッグして範囲を絞ると誤検知が減ります。"
+            : "自動監視: 開始（指定範囲）。";
+    }
+
+    /// <summary>
+    /// 見回り 1 回分。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>この間隔で行うのは撮影と差分の比較だけ。</b>
+    /// 変化がなければ OCR も翻訳もしない（FR-OCR-07）。</para>
+    /// <para>翻訳中は何もしない。重ねて走らせると、前の訳文が出る前に次が始まる。</para>
+    /// </remarks>
+    private async void OnWatchTick(object? sender, EventArgs e)
+    {
+        if (_watchGate is null || _isTranslatingScreen)
+        {
+            return;
+        }
+
+        try
+        {
+            var target = ResolveHotkeyTarget();
+            if (target is null)
+            {
+                return;
+            }
+
+            var capture = await EnsureCaptureAsync(target).ConfigureAwait(true);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var frame = await capture.GetNextFrameAsync(timeout.Token).ConfigureAwait(true);
+
+            // 比べるのは監視している範囲だけ（FR-MOD-02「指定領域を監視」）。
+            var image = frame.AsImage();
+            if (_region is { } region)
+            {
+                image = image.Crop(region.X, region.Y, region.Width, region.Height);
+            }
+
+            // FR-MOD-05: ゲームが前面にない間は止める。
+            var isForeground = target.Kind != CaptureTargetKind.Window
+                               || WindowFocus.IsForeground(target.Handle);
+
+            switch (_watchGate.Evaluate(image, isForeground))
+            {
+                case AutoWatchDecision.Translate:
+                    await TranslateAsync(useCursorWindow: false).ConfigureAwait(true);
+                    break;
+
+                case AutoWatchDecision.RateLimited:
+                    // FR-MOD-04。黙って止まると「効いていない」と見えるので理由を出す。
+                    StatusText.Text =
+                        $"自動監視: 1 時間あたり {_watchOptions.MaxCallsPerHour} 回の上限に達しました。"
+                        + $"約 {_watchGate.TimeUntilNext.TotalMinutes:F0} 分後に再開します。";
+                    break;
+
+                default:
+                    break;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // 画面が取れなかっただけ。次の見回りで拾う。
+        }
+    }
+
+    private void OnAutoWatchChanged(object sender, RoutedEventArgs e) =>
+        SetAutoWatch(AutoWatchCheck.IsChecked == true);
+
     /// <summary>キャプチャ画像の保存先（FR-CFG-00）。</summary>
     private static string CaptureDirectory => GlosslayPaths.Captures;
 
@@ -302,6 +423,8 @@ private void StartHotkey()
         _hwndSource?.RemoveHook(OnWindowMessage);
         _hwndSource = null;
 
+        _watchTimer?.Stop();
+        _watchTimer = null;
         ReleaseCapture();
         _overlay?.Close();
         _inputTrigger?.Dispose();

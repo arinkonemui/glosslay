@@ -3,7 +3,9 @@ using System.Text;
 using Glosslay.Ads;
 using Glosslay.Configuration;
 using Glosslay.Entitlement;
+using Glosslay.Imaging;
 using Glosslay.Input;
+using Glosslay.Monitoring;
 using Glosslay.Ocr;
 using Glosslay.Translation;
 
@@ -110,6 +112,12 @@ internal static class Program
         if (args.Contains("--selection", StringComparer.Ordinal))
         {
             return CheckSelection();
+        }
+
+        // --watch: 自動監視の守り（FR-MOD-02 / 04 / 05 / FR-OCR-07）を確かめる。モデルを読まない。
+        if (args.Contains("--watch", StringComparer.Ordinal))
+        {
+            return CheckAutoWatch();
         }
 
         // --services: 横断インターフェース（RULES.md 🟡-2 / 🟡-4）の配線を確かめる。モデルを読まない。
@@ -253,6 +261,95 @@ internal static class Program
         public void Dispose()
         {
         }
+    }
+
+    /// <summary>
+    /// 自動監視の守りを確かめる（FR-MOD-02 / 04 / 05 / FR-OCR-07）。
+    /// </summary>
+    /// <remarks>
+    /// <b>自動監視は RULES.md 🟡-8（予期しない課金）に正面からぶつかる。</b>
+    /// 止まるべきときに止まることを、画面を見ずに確かめる。
+    /// </remarks>
+    private static int CheckAutoWatch()
+    {
+        var failures = 0;
+
+        void Check(string label, AutoWatchDecision actual, AutoWatchDecision expected)
+        {
+            var ok = actual == expected;
+            if (!ok)
+            {
+                failures++;
+            }
+
+            Console.WriteLine($"  {(ok ? "  " : "★ ")}{label,-40} {actual,-14}（期待 {expected}）");
+        }
+
+        var black = Solid(64, 48, 0);
+        var white = Solid(64, 48, 255);
+
+        Console.WriteLine("=== 止まる条件（FR-MOD-05 / FR-OCR-07）===");
+        var gate = new AutoWatchGate();
+        Check("前面でなければ見もしない", gate.Evaluate(black, isForeground: false),
+            AutoWatchDecision.NotForeground);
+        Check("最初の 1 枚は比べる相手がない", gate.Evaluate(black, true), AutoWatchDecision.FirstFrame);
+        Check("変化がなければ翻訳しない", gate.Evaluate(black, true), AutoWatchDecision.NoChange);
+        Check("変化があれば翻訳する", gate.Evaluate(white, true), AutoWatchDecision.Translate);
+        Check("同じ画面が続けば止まる", gate.Evaluate(white, true), AutoWatchDecision.NoChange);
+
+        Console.WriteLine();
+        Console.WriteLine("=== 呼び出し上限（FR-MOD-04）===");
+        var clock = new FakeClock(DateTimeOffset.UnixEpoch);
+        var limiter = new CallRateLimiter(maxCalls: 2, window: TimeSpan.FromHours(1), timeProvider: clock);
+        var limited = new AutoWatchGate(new AutoWatchOptions(), limiter);
+
+        limited.Evaluate(black, true);
+        Check("1 回目", limited.Evaluate(white, true), AutoWatchDecision.Translate);
+        Check("2 回目", limited.Evaluate(black, true), AutoWatchDecision.Translate);
+        Check("上限に達したら止まる", limited.Evaluate(white, true), AutoWatchDecision.RateLimited);
+
+        var beforeWindow = limiter.Remaining;
+        clock.Advance(TimeSpan.FromMinutes(61));
+        Console.WriteLine($"     残り {beforeWindow} → 61 分後 {limiter.Remaining}");
+        Check("窓を過ぎれば戻る", limited.Evaluate(black, true), AutoWatchDecision.Translate);
+
+        Console.WriteLine();
+        Console.WriteLine("=== 消費しない条件 ===");
+        var counted = new CallRateLimiter(maxCalls: 5, timeProvider: new FakeClock(DateTimeOffset.UnixEpoch));
+        var counting = new AutoWatchGate(new AutoWatchOptions(), counted);
+        counting.Evaluate(black, true);
+        counting.Evaluate(black, true);
+        counting.Evaluate(black, isForeground: false);
+        var ok5 = counted.Remaining == 5;
+        if (!ok5)
+        {
+            failures++;
+        }
+
+        Console.WriteLine($"  {(ok5 ? "  " : "★ ")}翻訳しなかった回は上限を消費しない    残り {counted.Remaining}/5（期待 5/5）");
+
+        Console.WriteLine();
+        Console.WriteLine(failures == 0 ? "すべて期待どおり。" : $"★ {failures} 件が期待と違う。");
+        return failures == 0 ? 0 : 1;
+    }
+
+    /// <summary>一様な色の画像。差分判定の検査にだけ使う。</summary>
+    private static Bgra32Image Solid(int width, int height, byte value)
+    {
+        var stride = width * 4;
+        var pixels = new byte[stride * height];
+        Array.Fill(pixels, value);
+        return new Bgra32Image(pixels, width, height, stride);
+    }
+
+    /// <summary>時間を手で進められる時計。上限が窓で戻ることを確かめるために使う。</summary>
+    private sealed class FakeClock(DateTimeOffset start) : TimeProvider
+    {
+        private DateTimeOffset _now = start;
+
+        public override DateTimeOffset GetUtcNow() => _now;
+
+        public void Advance(TimeSpan span) => _now += span;
     }
 
     /// <summary>

@@ -139,6 +139,15 @@
                 </StackPanel>
             </GroupBox>
 
+            <GroupBox Header="自動監視 (FR-MOD-02)">
+                <StackPanel>
+                    <CheckBox x:Name="AutoWatchCheck" Content="画面の変化を見て自動で翻訳する"
+                              Checked="OnAutoWatchChanged" Unchecked="OnAutoWatchChanged" />
+                    <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,4,0,0"
+                               Text="セリフ送りに追従するモードです。既定は OFF。プレビューをドラッグして範囲を絞ると、背景の動きによる誤検知が減ります。変化がなければ OCR も翻訳もしません。1 時間あたりの呼び出し回数に上限があります (FR-MOD-04)。設定は autowatch.json で。" />
+                </StackPanel>
+            </GroupBox>
+
             <GroupBox Header="対象">
                 <!-- 高さを固定する。スクロール内で * を使うと高さが決まらない。 -->
                 <ListBox x:Name="TargetList" Height="170" DisplayMemberPath="DisplayName"
