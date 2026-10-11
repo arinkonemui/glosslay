@@ -57,6 +57,17 @@ public sealed record TranslationOptions
     /// </remarks>
     public TranslationBackendChoice Backend { get; init; } = TranslationBackendChoice.Auto;
 
+    /// <summary>
+    /// 訳文の言語。BCP 47（FR-CFG-01 の「言語」）。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>プロファイルを当てると上書きされる。</b>ここにあるのは
+    /// 「いまの値」で、ゲームごとの値は <c>Profile.TargetLanguage</c> が持つ。</para>
+    /// <para><b>既定の日本語以外はクラウド翻訳のAPIキーが要る</b>（FR-TRN-03 / RULES.md 🟡-1）。
+    /// 選択肢は <see cref="TargetLanguages"/>。</para>
+    /// </remarks>
+    public string TargetLanguage { get; init; } = TargetLanguages.Default;
+
     /// <summary>設定を読み込む。ファイルが無い / 壊れている場合は既定値。</summary>
     public static TranslationOptions Load() =>
         JsonSettings.Load(FileName, () => new TranslationOptions());

@@ -18,9 +18,9 @@ public sealed record AutoWatchOptions
     /// 自動監視を使うか。<b>既定は OFF。</b>
     /// </summary>
     /// <remarks>
-    /// <b>勝手に呼び出し続ける機能を、利用者が知らないうちに動かさない</b>（RULES.md 🟡-8）。
-    /// PvP ではプロファイル単位で既定 OFF にする（FR-MOD-06）が、
-    /// <b>強制はしない</b>（FR-MOD-07）。
+    /// <para><b>勝手に呼び出し続ける機能を、利用者が知らないうちに動かさない</b>（RULES.md 🟡-8）。</para>
+    /// <para>プロファイル単位でも既定 OFF（<c>Profile.AutoWatch</c> / FR-MOD-06）だが、
+    /// <b>アプリの判断で強制的に無効化はしない</b>（FR-MOD-07）。決めるのは利用者。</para>
     /// </remarks>
     public bool Enabled { get; init; }
 
@@ -46,6 +46,16 @@ public sealed record AutoWatchOptions
 
     /// <summary>1 時間あたりの呼び出し上限（FR-MOD-04）。</summary>
     public int MaxCallsPerHour { get; init; } = CallRateLimiter.DefaultMaxCalls;
+
+    /// <summary>
+    /// 初めて ON にするときの案内を済ませたか（FR-MOD-08）。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>案内は 1 回だけ。</b>毎回出すと読まずに閉じるようになり、
+    /// 伝えたい処理時間がかえって届かなくなる。</para>
+    /// <para>手で <c>false</c> に戻せば、もう一度出せる。</para>
+    /// </remarks>
+    public bool FirstEnableNoticeShown { get; init; }
 
     /// <summary>設定を読み込む。ファイルが無い / 壊れている場合は既定値。</summary>
     public static AutoWatchOptions Load() => JsonSettings.Load(FileName, () => new AutoWatchOptions());

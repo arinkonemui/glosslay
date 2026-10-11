@@ -87,4 +87,12 @@ public sealed record Profile
         return TitleContains.Length == 0
             || windowTitle.Contains(TitleContains, StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>表示名。</summary>
+    /// <remarks>
+    /// <b>レコードの既定の表記を使わせない。</b>一覧に並べると
+    /// 支援技術（スクリーンリーダー）が読み上げる名前がこれになり、
+    /// <c>Profile { Name = Elin, WindowClass = ... }</c> と全項目が読まれる。
+    /// </remarks>
+    public override string ToString() => Name;
 }

@@ -15,6 +15,7 @@ using Glosslay.Imaging;
 using Glosslay.Input;
 using Glosslay.Monitoring;
 using Glosslay.Ocr;
+using Glosslay.Profiles;
 using Glosslay.Translation;
 
 namespace Glosslay;
@@ -33,6 +34,9 @@ public partial class MainWindow : Window, IDisposable
 {
     /// <summary>遅延キャプチャの待ち時間。ゲームへ切り替えるための猶予。</summary>
     private static readonly TimeSpan CaptureDelay = TimeSpan.FromSeconds(5);
+
+    /// <summary>範囲指定として扱う最小の辺（画素）。これ未満は誤操作とみなす。</summary>
+    private const int MinRegionSize = 16;
 
     private readonly PaddleOcrEngine _ocrEngine = new();
     private readonly ApiKeyStore _apiKeyStore = ApiKeyStore.Gemini;
@@ -129,8 +133,26 @@ public partial class MainWindow : Window, IDisposable
     /// <summary>自動監視の見回り。</summary>
     private DispatcherTimer? _watchTimer;
 
+    /// <summary>ゲームごとの設定（FR-CFG-01）。上限は資格サービスを経由する。</summary>
+    private readonly ProfileStore _profileStore;
+
+    /// <summary>自動適用の設定（FR-CFG-02）。</summary>
+    private ProfileOptions _profileOptions = ProfileOptions.Load();
+
+    /// <summary>前面ウィンドウの見回り。自動適用のためだけに回す。</summary>
+    private DispatcherTimer? _profileTimer;
+
+    /// <summary>いま当たっているプロファイルの名前。何も当たっていなければ空。</summary>
+    private string _appliedProfileName = string.Empty;
+
+    /// <summary>直前に見た前面ウィンドウ。変わっていなければ何もしない。</summary>
+    private nint _lastForegroundWindow;
+
     /// <summary>ラジオへ選択を反映している間、Checked の処理を止める。</summary>
     private bool _suppressBackendChange;
+
+    /// <summary>一覧へ選択を反映している間、SelectionChanged の処理を止める。</summary>
+    private bool _suppressLanguageChange;
 
     private ScreenCapture? _capture;
     private CaptureTarget? _activeTarget;
@@ -144,6 +166,16 @@ public partial class MainWindow : Window, IDisposable
 
     /// <summary>OCR の対象範囲（元画像の画素座標）。null なら全体。</summary>
     private Int32Rect? _region;
+
+    /// <summary>
+    /// 前処理のうち画面に操作子が無い項目を保持する土台。
+    /// </summary>
+    /// <remarks>
+    /// 補間方法（<c>Resampling</c>）と背景除去の窓（<c>BackgroundWindow</c>）には
+    /// 操作子が無い。プロファイルを当てたときにここへ入れておかないと、
+    /// 次の <see cref="BuildPreprocessOptions"/> で既定へ戻ってしまう。
+    /// </remarks>
+    private PreprocessOptions _preprocessBase = new();
 
     /// <summary>直前の OCR 結果。翻訳ボタンが原文として使う。</summary>
     private IReadOnlyList<OcrLine> _lastOcrLines = [];
@@ -178,6 +210,10 @@ public partial class MainWindow : Window, IDisposable
     {
         InitializeComponent();
         _cloudTranslator = CreateCloudTranslator();
+
+        // FR-SYS-10 / RULES.md 🟡-4: 件数の上限は必ず資格サービスを経由する。
+        _profileStore = new ProfileStore(_entitlements);
+
         Loaded += OnLoaded;
         Closed += OnWindowClosed;
     }
@@ -271,6 +307,16 @@ private void StartHotkey()
     /// </remarks>
     private void SetAutoWatch(bool enabled)
     {
+        // FR-MOD-08: 初めて ON にするときだけ、処理時間を示して確認する。
+        // 承諾の記録より先に問う。順序を逆にすると、断っても「案内済み」になる。
+        if (enabled && !_watchOptions.FirstEnableNoticeShown && !ConfirmFirstAutoWatch())
+        {
+            // ここで SetAutoWatch(false) が入れ子で走り、タイマーと設定が片付く。
+            AutoWatchCheck.IsChecked = false;
+            StatusText.Text = "自動監視: 取りやめました（いつでも入れ直せます）。";
+            return;
+        }
+
         _watchOptions = _watchOptions with { Enabled = enabled };
         _watchOptions.Save();
 
@@ -336,9 +382,10 @@ private void StartHotkey()
 
             // 比べるのは監視している範囲だけ（FR-MOD-02「指定領域を監視」）。
             var image = frame.AsImage();
-            if (_region is { } region)
+            if (_region is { } region
+                && ClipRegion(region, image.Width, image.Height) is { } fitted)
             {
-                image = image.Crop(region.X, region.Y, region.Width, region.Height);
+                image = image.Crop(fitted.X, fitted.Y, fitted.Width, fitted.Height);
             }
 
             // FR-MOD-05: ゲームが前面にない間は止める。
@@ -366,6 +413,37 @@ private void StartHotkey()
         {
             // 画面が取れなかっただけ。次の見回りで拾う。
         }
+    }
+
+    /// <summary>
+    /// 初めて自動監視を ON にするときの案内（FR-MOD-08）。入れてよければ <c>true</c>。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>読まずに始められない形にする。</b>自動監視は利用者が押していない翻訳を
+    /// 起こし続けるため、RULES.md 🟡-8（予期しない課金）に正面からぶつかる。
+    /// 文面に実測の処理時間を入れるのが FR-MOD-08 の趣旨で、
+    /// <b>やめる選択肢を同時に出す</b>ことで初めて判断になる。</para>
+    /// <para>文面は <see cref="AutoWatchNotice"/> にある。数字が実測から離れていないかを
+    /// <c>NmtBench --watch</c> で見るため、画面から切り離してある。</para>
+    /// </remarks>
+    private bool ConfirmFirstAutoWatch()
+    {
+        var answer = MessageBox.Show(
+            this,
+            AutoWatchNotice.Build(_watchOptions, _region is not null),
+            "自動監視について",
+            MessageBoxButton.OKCancel,
+            MessageBoxImage.Information);
+
+        if (answer != MessageBoxResult.OK)
+        {
+            return false;
+        }
+
+        // 承諾は 1 回だけ記録する。次からは黙って始めてよい。
+        _watchOptions = _watchOptions with { FirstEnableNoticeShown = true };
+        _watchOptions.Save();
+        return true;
     }
 
     private void OnAutoWatchChanged(object sender, RoutedEventArgs e) =>
@@ -454,6 +532,471 @@ private void StartHotkey()
     private void OnCursorDwellChanged(object sender, RoutedEventArgs e) =>
         SetCursorDwell(CursorDwellCheck.IsChecked == true);
 
+    // ===== プロファイル（FR-CFG-01〜03） =====
+
+    /// <summary>
+    /// 一覧を作り直す。
+    /// </summary>
+    /// <remarks>
+    /// <b>毎回新しい配列を渡す。</b><see cref="ProfileStore.Profiles"/> は同じ実体を返すため、
+    /// そのまま入れ直しても WPF は変化に気づかない。
+    /// </remarks>
+    private void RefreshProfiles(string? select = null)
+    {
+        ProfileCombo.ItemsSource = _profileStore.Profiles.ToArray();
+
+        var wanted = select ?? _appliedProfileName;
+        if (wanted.Length > 0 && _profileStore.Find(wanted) is { } found)
+        {
+            ProfileCombo.SelectedItem = ProfileCombo.Items
+                .OfType<Profile>()
+                .FirstOrDefault(p => p.Name == found.Name);
+        }
+        else if (ProfileCombo.Items.Count > 0)
+        {
+            ProfileCombo.SelectedIndex = 0;
+        }
+    }
+
+    /// <summary>
+    /// 保存するときに使うクラス名とタイトルを見せる。
+    /// </summary>
+    /// <remarks>
+    /// <b>タイトルの絞り込みは利用者に書いてもらう</b>ため、材料を出しておく。
+    /// 「ゲーム名 - ステージ3」のように変わる部分まで保存すると、次回は当たらない。
+    /// </remarks>
+    private void UpdateProfileTargetText()
+    {
+        if (TargetList.SelectedItem is not CaptureTarget target)
+        {
+            ProfileTargetText.Text = "対象: 未選択";
+            return;
+        }
+
+        if (target.Kind != CaptureTargetKind.Window)
+        {
+            ProfileTargetText.Text = "対象: モニタ全体（クラス名が無いため自動では切り替わりません）";
+            return;
+        }
+
+        var className = WindowIdentity.GetClassName(target.Handle);
+        ProfileTargetText.Text = WindowIdentity.IsVolatileClassName(className)
+            ? $"対象: タイトル {target.DisplayName}"
+                + "（クラス名は起動ごとに変わるため使えません。タイトルで絞ってください）"
+            : $"対象: クラス名 {className} / タイトル {target.DisplayName}";
+    }
+
+    /// <summary>
+    /// いまの設定を 1 件のプロファイルにする（FR-CFG-01）。
+    /// </summary>
+    /// <remarks>
+    /// <b>APIキーと翻訳バックエンドの選択は入れない。</b>キーは DPAPI の別の場所にあり
+    /// （FR-TRN-05）、バックエンドはゲームごとではなくアプリ全体の設定
+    /// （<c>translation.json</c>）。交換する前提のファイルに秘密を混ぜない。
+    /// </remarks>
+    private Profile BuildProfile(string name, string windowClass, string titleContains) => new()
+    {
+        Name = name,
+        WindowClass = windowClass,
+        TitleContains = titleContains,
+        Region = _region is { } region
+            ? new FrameRect(region.X, region.Y, region.Width, region.Height)
+            : null,
+        Preprocess = BuildPreprocessOptions(),
+        TargetLanguage = _translationOptions.TargetLanguage,
+        AutoWatch = AutoWatchCheck.IsChecked == true,
+        CursorDwell = CursorDwellCheck.IsChecked == true,
+    };
+
+    private void OnSaveProfileClick(object sender, RoutedEventArgs e)
+    {
+        var selected = TargetList.SelectedItem as CaptureTarget;
+        var readClass = selected is { Kind: CaptureTargetKind.Window }
+            ? WindowIdentity.GetClassName(selected.Handle)
+            : string.Empty;
+
+        // 起動ごとに変わるクラス名は残さない。保存できても次回は当たらない。
+        var isVolatile = readClass.Length > 0 && WindowIdentity.IsVolatileClassName(readClass);
+        var windowClass = isVolatile ? string.Empty : readClass;
+
+        var name = ProfileNameBox.Text.Trim();
+        if (name.Length == 0)
+        {
+            name = selected?.DisplayName.Trim() ?? string.Empty;
+        }
+
+        var profile = BuildProfile(name, windowClass, ProfileTitleBox.Text.Trim());
+        var note = isVolatile
+            ? "（このアプリのクラス名は起動ごとに変わるため使いません。"
+                + "タイトルに含まれる文字列を入れてください）"
+            : string.Empty;
+
+        switch (_profileStore.Save(profile))
+        {
+            case ProfileSaveResult.NameRequired:
+                StatusText.Text = "プロファイル: 名前を入れてください（対象を選べばタイトルを使います）。";
+                return;
+
+            // FR-SYS-10 / RULES.md 🟡-4。v1.0 は上限なしだが、理由は必ず伝える。
+            case ProfileSaveResult.LimitReached:
+                StatusText.Text =
+                    $"プロファイル: 保存できるのは {_entitlements.MaxProfiles} 件までです。"
+                    + "どれかを削除してください。";
+                return;
+
+            case ProfileSaveResult.Replaced:
+                StatusText.Text =
+                    $"プロファイル「{profile.Name}」を上書きしました。{MatchSummary(profile)}{note}";
+                break;
+
+            default:
+                StatusText.Text =
+                    $"プロファイル「{profile.Name}」を保存しました。{MatchSummary(profile)}{note}";
+                break;
+        }
+
+        _appliedProfileName = profile.Name;
+        ProfileNameBox.Text = profile.Name;
+        RefreshProfiles(profile.Name);
+    }
+
+    /// <summary>
+    /// 保存したプロファイルが自動適用の対象になるかを言葉にする。
+    /// </summary>
+    /// <remarks>
+    /// <b>モニタ全体で保存するとクラス名が取れない。</b>自動では当たらないが、
+    /// 範囲と前処理は「適用」で使えるため、保存は断らずに理由だけ伝える。
+    /// </remarks>
+    private static string MatchSummary(Profile profile)
+    {
+        if (profile.WindowClass.Length == 0 && profile.TitleContains.Length == 0)
+        {
+            return "対象のウィンドウが分からないため、自動では切り替わりません（「適用」で使えます）。";
+        }
+
+        var title = profile.TitleContains.Length > 0
+            ? $" / タイトルに「{profile.TitleContains}」"
+            : string.Empty;
+
+        return profile.WindowClass.Length > 0
+            ? $"自動適用の条件: クラス名「{profile.WindowClass}」{title}"
+            : $"自動適用の条件: タイトルに「{profile.TitleContains}」";
+    }
+
+    private void OnApplyProfileClick(object sender, RoutedEventArgs e)
+    {
+        if (ProfileCombo.SelectedItem is not Profile profile)
+        {
+            StatusText.Text = "プロファイル: 適用するものを選んでください。";
+            return;
+        }
+
+        ApplyProfile(profile, automatic: false);
+    }
+
+    /// <summary>
+    /// プロファイルを画面へ反映する（FR-CFG-01 / 02）。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>一覧の選択は揃えるだけで、撮る対象は変えない。</b>ホットキーも自動監視も
+    /// 撮るのは前面のウィンドウ（<see cref="ResolveHotkeyTarget"/>）。一覧は操作ウィンドウが
+    /// 前面のときに使う検証用の経路なので、当てはまるものが無くても困らない。</para>
+    /// <para><b>自動監視を含むプロファイルは、当たった時点で呼び出しが始まる。</b>
+    /// 黙って始めないため（RULES.md 🟡-8）、何が ON になったかを必ず画面に出す。</para>
+    /// </remarks>
+    private void ApplyProfile(Profile profile, bool automatic)
+    {
+        _appliedProfileName = profile.Name;
+
+        // 画面に出していない項目（補間方法・背景除去の窓）を落とさないため、
+        // プロファイルの値を土台にする。画面の 6 項目はこの後で上書きされる。
+        _preprocessBase = profile.Preprocess;
+
+        SelectComboValue(ScaleCombo, profile.Preprocess.Scale, "0.0 倍");
+        SelectComboValue(ContrastCombo, profile.Preprocess.Contrast, "0.0#");
+        AutoContrastCheck.IsChecked = profile.Preprocess.AutoContrast;
+        RemoveBackgroundCheck.IsChecked = profile.Preprocess.RemoveBackground;
+        BinarizeCheck.IsChecked = profile.Preprocess.Binarize;
+        InvertCheck.IsChecked = profile.Preprocess.Invert;
+
+        _region = profile.Region is { } region
+            ? new Int32Rect(region.X, region.Y, region.Width, region.Height)
+            : null;
+        ShowRegionRectangle();
+
+        // 訳文の言語はゲームごとに変わりうる（FR-CFG-01）。覚えている訳は
+        // 言語ごとに分かれているが、切り替えた直後に前の言語の訳が出ると紛らわしい。
+        if (!string.Equals(_translationOptions.TargetLanguage, profile.TargetLanguage, StringComparison.OrdinalIgnoreCase))
+        {
+            _translationOptions = _translationOptions with { TargetLanguage = profile.TargetLanguage };
+            _translationOptions.Save();
+            _translationCache.Clear();
+        }
+
+        SelectTargetLanguage(profile.TargetLanguage);
+
+        // FR-MOD-08 の案内がまだなら、自動で当たったプロファイルの自動監視は入れない。
+        // ゲームが前面のときに問いかけても、こちらのウィンドウは背面で見えない。
+        // 貰った / 手で書いたプロファイル（FR-CFG-03）はこの経路で来る。
+        var deferWatch = automatic && profile.AutoWatch && !_watchOptions.FirstEnableNoticeShown;
+
+        // チェックボックス経由で通す。タイマーを起こす / 止めるのは
+        // SetAutoWatch と SetCursorDwell にあり、同じ値なら WPF がイベントを出さない。
+        AutoWatchCheck.IsChecked = profile.AutoWatch && !deferWatch;
+        CursorDwellCheck.IsChecked = profile.CursorDwell;
+
+        ProfileNameBox.Text = profile.Name;
+        ProfileTitleBox.Text = profile.TitleContains;
+        SelectTargetFor(profile);
+
+        StatusText.Text = $"プロファイル「{profile.Name}」を{(automatic ? "自動で適用" : "適用")}しました。"
+            + AppliedSummary(profile, watchEnabled: profile.AutoWatch && !deferWatch)
+            + (deferWatch
+                ? "／自動監視は初回だけ確認が要ります。この画面でチェックを入れてください。"
+                : string.Empty);
+    }
+
+    /// <summary>適用した内容のうち、見えないと困るものを並べる。</summary>
+    /// <remarks>
+    /// <b>ON になった自動の機能は必ず挙げる。</b>範囲と前処理は結果を見れば分かるが、
+    /// 自動監視とカーソル静止は<b>翻訳の呼び出しを自分で起こす</b>（RULES.md 🟡-8）。
+    /// </remarks>
+    /// <param name="watchEnabled">
+    /// 実際に自動監視が始まったか。<b>プロファイルの値ではなく結果を渡す。</b>
+    /// FR-MOD-08 の案内待ちで見送った場合に「ON」と出しては嘘になる。
+    /// </param>
+    private static string AppliedSummary(Profile profile, bool watchEnabled)
+    {
+        var parts = new List<string>
+        {
+            profile.Region is { } region
+                ? $"範囲 {region.X},{region.Y} {region.Width}x{region.Height}"
+                : "範囲 全体",
+            profile.Preprocess.ToString(),
+            $"訳文 {TargetLanguages.DisplayNameOf(profile.TargetLanguage)}",
+        };
+
+        if (watchEnabled)
+        {
+            parts.Add("自動監視 ON");
+        }
+
+        if (profile.CursorDwell)
+        {
+            parts.Add("カーソル静止 ON");
+        }
+
+        return string.Join(" / ", parts);
+    }
+
+    /// <summary>
+    /// コンボボックスの選択を値で合わせる。一覧に無い値なら項目を足す。
+    /// </summary>
+    /// <remarks>
+    /// <b>手で profiles.json に書いた値を黙って捨てないため。</b>選べないからといって
+    /// 既定へ戻すと、「保存したのに効いていない」ことに気づけない。
+    /// </remarks>
+    private static void SelectComboValue(
+        System.Windows.Controls.ComboBox combo, double value, string format)
+    {
+        foreach (var item in combo.Items.OfType<System.Windows.Controls.ComboBoxItem>())
+        {
+            if (item.Tag is string tag
+                && double.TryParse(tag, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+                && parsed == value)
+            {
+                combo.SelectedItem = item;
+                return;
+            }
+        }
+
+        var added = new System.Windows.Controls.ComboBoxItem
+        {
+            Content = value.ToString(format, System.Globalization.CultureInfo.InvariantCulture),
+            Tag = value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture),
+        };
+
+        combo.Items.Add(added);
+        combo.SelectedItem = added;
+    }
+
+    /// <summary>
+    /// 一覧の選択をプロファイルに合わせる（見つかれば）。
+    /// </summary>
+    /// <remarks>
+    /// <b>見つからなくても何もしない。</b>ゲームを起動していないだけのことが多く、
+    /// 黙って別の対象へ移ると、見当違いの画面を撮ることになる。
+    /// </remarks>
+    private void SelectTargetFor(Profile profile)
+    {
+        if (TargetList.ItemsSource is not IEnumerable<CaptureTarget> targets)
+        {
+            return;
+        }
+
+        foreach (var target in targets)
+        {
+            if (target.Kind == CaptureTargetKind.Window
+                && profile.Matches(WindowIdentity.GetClassName(target.Handle), target.DisplayName))
+            {
+                TargetList.SelectedItem = target;
+                return;
+            }
+        }
+    }
+
+    private void OnDeleteProfileClick(object sender, RoutedEventArgs e)
+    {
+        if (ProfileCombo.SelectedItem is not Profile profile)
+        {
+            StatusText.Text = "プロファイル: 削除するものを選んでください。";
+            return;
+        }
+
+        // 戻せない操作なので確かめる。消すと範囲の指定からやり直しになる。
+        var answer = MessageBox.Show(
+            this,
+            $"プロファイル「{profile.Name}」を削除します。",
+            "Glosslay",
+            MessageBoxButton.OKCancel,
+            MessageBoxImage.Warning);
+
+        if (answer != MessageBoxResult.OK)
+        {
+            return;
+        }
+
+        _profileStore.Remove(profile.Name);
+
+        // いま当たっているものを消しても、設定はそのまま残す。
+        // 範囲や前処理が同時に戻ると、作業中のものが消える。
+        if (string.Equals(_appliedProfileName, profile.Name, StringComparison.OrdinalIgnoreCase))
+        {
+            _appliedProfileName = string.Empty;
+        }
+
+        RefreshProfiles();
+        StatusText.Text = $"プロファイル「{profile.Name}」を削除しました（今の設定はそのままです）。";
+    }
+
+    /// <summary>
+    /// <c>profiles.json</c> をファイルから読み直す（FR-CFG-03 のインポート）。
+    /// </summary>
+    /// <remarks>
+    /// 他の人から貰った 1 件を貼り付ける経路がこれ。<b>壊れていても落ちない</b>
+    /// （<see cref="JsonSettings.Load"/> が既定値に倒す）が、黙って空になると
+    /// 消えたように見えるため件数を出す。
+    /// </remarks>
+    private void OnReloadProfilesClick(object sender, RoutedEventArgs e)
+    {
+        _profileStore.Reload();
+        RefreshProfiles();
+
+        // 書式が 1 か所でも壊れていると一覧ごと空になる（JsonSettings.Load が既定値に倒す）。
+        // 「0 件」だけでは消えたように見えるため、理由を出す。
+        var path = JsonSettings.PathOf(ProfileStore.FileName);
+        var looksBroken = _profileStore.Profiles.Count == 0
+            && File.Exists(path)
+            && new FileInfo(path).Length > 2;
+
+        StatusText.Text = looksBroken
+            ? "プロファイルを読めませんでした。profiles.json の書式を確かめてください"
+                + "（1 か所でも壊れていると全部読めません）。"
+            : $"プロファイルを読み直しました: {_profileStore.Profiles.Count} 件。";
+    }
+
+    private void OnOpenProfilesClick(object sender, RoutedEventArgs e)
+    {
+        var path = JsonSettings.PathOf(ProfileStore.FileName);
+        if (!File.Exists(path))
+        {
+            StatusText.Text = "プロファイルがまだありません。先に「現在の設定を保存」を押してください。";
+            return;
+        }
+
+        Process.Start(new ProcessStartInfo(path) { UseShellExecute = true })?.Dispose();
+        StatusText.Text = "profiles.json を開きました。編集したら「読み直す」を押してください。";
+    }
+
+    private void OnProfileAutoApplyChanged(object sender, RoutedEventArgs e) =>
+        SetProfileAutoApply(ProfileAutoApplyCheck.IsChecked == true);
+
+    /// <summary>自動適用を始める / 止める（FR-CFG-02）。</summary>
+    private void SetProfileAutoApply(bool enabled)
+    {
+        if (_profileOptions.AutoApply != enabled)
+        {
+            _profileOptions = _profileOptions with { AutoApply = enabled };
+            _profileOptions.Save();
+        }
+
+        _profileTimer?.Stop();
+        _profileTimer = null;
+        _lastForegroundWindow = 0;
+
+        if (!enabled)
+        {
+            return;
+        }
+
+        _profileTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = _profileOptions.PollInterval,
+        };
+
+        _profileTimer.Tick += OnProfileTick;
+        _profileTimer.Start();
+    }
+
+    /// <summary>
+    /// 前面のウィンドウを見て、当てはまるプロファイルがあれば当てる（FR-CFG-02）。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>行うのは前面のハンドルの問い合わせだけ。</b>変わっていなければ何もしない。
+    /// ゲームプロセスへのアタッチやハンドル取得はしない（RULES.md 🔴-1）。</para>
+    /// <para><b>当てはまるものが無いときは解除しない。</b>ブラウザを見に行って戻るだけで
+    /// 範囲の指定が消えると、やり直しになる。</para>
+    /// </remarks>
+    private void OnProfileTick(object? sender, EventArgs e)
+    {
+        // 翻訳中は触らない。範囲や前処理が途中で変わると、出てくる訳文と設定が食い違う。
+        if (_isTranslatingScreen)
+        {
+            return;
+        }
+
+        var foreground = WindowFocus.Current;
+        if (foreground == 0 || foreground == _lastForegroundWindow)
+        {
+            return;
+        }
+
+        _lastForegroundWindow = foreground;
+
+        // 自分のウィンドウは見ない。設定している最中に当て直すと、いま触った値が戻る。
+        if (foreground == new WindowInteropHelper(this).Handle)
+        {
+            return;
+        }
+
+        if (!CaptureTargetEnumerator.TryDescribe(foreground, out var target))
+        {
+            return;
+        }
+
+        var profile = _profileStore.FindForWindow(
+            WindowIdentity.GetClassName(foreground), target.DisplayName);
+
+        if (profile is null
+            || string.Equals(profile.Name, _appliedProfileName, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        ApplyProfile(profile, automatic: true);
+        RefreshProfiles(profile.Name);
+    }
+
     /// <summary>キャプチャ画像の保存先（FR-CFG-00）。</summary>
     private static string CaptureDirectory => GlosslayPaths.Captures;
 
@@ -468,7 +1011,15 @@ private void StartHotkey()
         }
 
         RefreshTargets();
+        SelectTargetLanguage(_translationOptions.TargetLanguage);
         RefreshTranslatorState();
+        RefreshProfiles();
+        UpdateProfileTargetText();
+
+        // チェックを入れると Checked が走って起動まで済むが、OFF のときは何も起きない。
+        // どちらでも同じ道を通すよう、明示的に呼んでおく。
+        ProfileAutoApplyCheck.IsChecked = _profileOptions.AutoApply;
+        SetProfileAutoApply(_profileOptions.AutoApply);
 
         // FR-OCR-08: 初回 OCR で待たせないよう、起動時に非同期でモデルを読み込んでおく。
         _ = WarmUpOcrAsync();
@@ -528,6 +1079,8 @@ private void StartHotkey()
         _watchTimer = null;
         _dwellTimer?.Stop();
         _dwellTimer = null;
+        _profileTimer?.Stop();
+        _profileTimer = null;
         ReleaseCapture();
         _overlay?.Close();
         _inputTrigger?.Dispose();
@@ -554,7 +1107,11 @@ private void StartHotkey()
     /// <summary>枠の有無・カーソルの有無はセッション生成時に決まるため、変更したら作り直す。</summary>
     private void OnOptionChanged(object sender, RoutedEventArgs e) => ReleaseCapture();
 
-    private void OnTargetSelectionChanged(object sender, SelectionChangedEventArgs e) => ReleaseCapture();
+    private void OnTargetSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        ReleaseCapture();
+        UpdateProfileTargetText();
+    }
 
     private void RefreshTargets()
     {
@@ -690,6 +1247,10 @@ private void StartHotkey()
         SaveButton.IsEnabled = true;
         OcrButton.IsEnabled = true;
         OverlayButton.IsEnabled = true;
+
+        // プロファイルで当てた範囲は、この時点で初めて描ける
+        // （適用した時点ではまだプレビューが無い）。
+        ShowRegionRectangle();
     }
 
     /// <summary>取得できたのが黒画面でないかの判定材料（FR-CAP-03）。</summary>
@@ -711,8 +1272,15 @@ private void StartHotkey()
 
     // ===== 前処理と範囲指定（P0-3） =====
 
-    /// <summary>UI の設定から前処理のオプションを組み立てる。</summary>
-    private PreprocessOptions BuildPreprocessOptions() => new()
+    /// <summary>
+    /// UI の設定から前処理のオプションを組み立てる。
+    /// </summary>
+    /// <remarks>
+    /// <b>画面に出していない項目は <see cref="_preprocessBase"/> から来る。</b>
+    /// 補間方法と背景除去の窓には操作子が無く、ここで組み直すと
+    /// プロファイルに書いた値が黙って既定へ戻る。
+    /// </remarks>
+    private PreprocessOptions BuildPreprocessOptions() => _preprocessBase with
     {
         Scale = ComboValue(ScaleCombo, 1.0),
         Contrast = ComboValue(ContrastCombo, 1.0),
@@ -747,10 +1315,22 @@ private void StartHotkey()
 
         if (useRegion && _region is { } region)
         {
-            // 範囲を絞ると検出コストが大きく下がる。全画面の 1/3 程度になる。
-            image = image.Crop(region.X, region.Y, region.Width, region.Height);
-            offsetX = region.X;
-            offsetY = region.Y;
+            // プロファイルの範囲は、保存したときと解像度が違えば画面の外に出る。
+            // 入れ直してから使い、ずれたことが分かるよう指定自体も直す。
+            var clipped = ClipRegion(region, image.Width, image.Height);
+            if (clipped != region)
+            {
+                _region = clipped;
+                ShowRegionRectangle();
+            }
+
+            if (clipped is { } fitted)
+            {
+                // 範囲を絞ると検出コストが大きく下がる。全画面の 1/3 程度になる。
+                image = image.Crop(fitted.X, fitted.Y, fitted.Width, fitted.Height);
+                offsetX = fitted.X;
+                offsetY = fitted.Y;
+            }
         }
 
         var options = BuildPreprocessOptions();
@@ -789,6 +1369,56 @@ private void StartHotkey()
                 (int)(line.Box.Width / scale),
                 (int)(line.Box.Height / scale)),
         })];
+    }
+
+    /// <summary>
+    /// 範囲を画像の中へ収める。収まる大きさが残らなければ <c>null</c>。
+    /// </summary>
+    /// <remarks>
+    /// <b>プロファイルの範囲は、保存したときと解像度が違えば画面の外に出る。</b>
+    /// 1920x1080 で保存した範囲を 1280x720 の画面に当てると
+    /// <c>Bgra32Image.Crop</c> が例外を投げ、翻訳そのものが失敗する。
+    /// </remarks>
+    private static Int32Rect? ClipRegion(Int32Rect region, int width, int height)
+    {
+        var x = Math.Clamp(region.X, 0, Math.Max(0, width));
+        var y = Math.Clamp(region.Y, 0, Math.Max(0, height));
+        var clippedWidth = Math.Min(region.Width, width - x);
+        var clippedHeight = Math.Min(region.Height, height - y);
+
+        return clippedWidth >= MinRegionSize && clippedHeight >= MinRegionSize
+            ? new Int32Rect(x, y, clippedWidth, clippedHeight)
+            : null;
+    }
+
+    /// <summary>
+    /// いまの範囲指定をプレビューに描く。
+    /// </summary>
+    /// <remarks>
+    /// プロファイルで範囲を当てたとき、<b>切り抜く場所が見えないと確かめようがない。</b>
+    /// プレビューがまだ無いときは描かない（次のキャプチャで描ける）。
+    /// </remarks>
+    private void ShowRegionRectangle()
+    {
+        if (_region is not { } region
+            || _lastBitmap is null
+            || !TryGetPreviewLayout(out var layout))
+        {
+            SelectionRectangle.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var scaleX = layout.DisplayWidth / _lastBitmap.PixelWidth;
+        var scaleY = layout.DisplayHeight / _lastBitmap.PixelHeight;
+
+        System.Windows.Controls.Canvas.SetLeft(
+            SelectionRectangle, layout.MarginX + (region.X * scaleX));
+        System.Windows.Controls.Canvas.SetTop(
+            SelectionRectangle, layout.MarginY + (region.Y * scaleY));
+
+        SelectionRectangle.Width = region.Width * scaleX;
+        SelectionRectangle.Height = region.Height * scaleY;
+        SelectionRectangle.Visibility = Visibility.Visible;
     }
 
     private void OnClearRegionClick(object sender, RoutedEventArgs e)
@@ -858,25 +1488,30 @@ private void StartHotkey()
         SelectionRectangle.Height = Math.Abs(a.Y - b.Y);
     }
 
+    /// <summary>プレビューに実際に描かれている画像の位置と大きさ。</summary>
+    private readonly record struct PreviewLayout(
+        double MarginX, double MarginY, double DisplayWidth, double DisplayHeight);
+
     /// <summary>
-    /// プレビュー上の座標を元画像の画素座標へ変換する。
+    /// プレビューに描かれている画像の位置と大きさを求める。
     /// </summary>
     /// <remarks>
     /// プレビューは Stretch="Uniform" のため上下または左右に余白ができる。
-    /// その余白を除いてから比率を掛けないと、指定した位置とずれる。
+    /// <b>座標の行きと帰りで同じ計算を使う。</b>片方だけ直すとずれる。
     /// </remarks>
-    private Int32Rect? ToSourceRegion(Point a, Point b)
+    private bool TryGetPreviewLayout(out PreviewLayout layout)
     {
+        layout = default;
         if (_lastBitmap is null)
         {
-            return null;
+            return false;
         }
 
         var controlWidth = SelectionCanvas.ActualWidth;
         var controlHeight = SelectionCanvas.ActualHeight;
         if (controlWidth <= 0 || controlHeight <= 0)
         {
-            return null;
+            return false;
         }
 
         var imageAspect = (double)_lastBitmap.PixelWidth / _lastBitmap.PixelHeight;
@@ -894,19 +1529,45 @@ private void StartHotkey()
             displayWidth = controlHeight * imageAspect;
         }
 
-        var marginX = (controlWidth - displayWidth) / 2;
-        var marginY = (controlHeight - displayHeight) / 2;
+        layout = new PreviewLayout(
+            (controlWidth - displayWidth) / 2,
+            (controlHeight - displayHeight) / 2,
+            displayWidth,
+            displayHeight);
 
-        var left = ToSource(Math.Min(a.X, b.X), marginX, displayWidth, _lastBitmap.PixelWidth);
-        var top = ToSource(Math.Min(a.Y, b.Y), marginY, displayHeight, _lastBitmap.PixelHeight);
-        var right = ToSource(Math.Max(a.X, b.X), marginX, displayWidth, _lastBitmap.PixelWidth);
-        var bottom = ToSource(Math.Max(a.Y, b.Y), marginY, displayHeight, _lastBitmap.PixelHeight);
+        return true;
+    }
+
+    /// <summary>
+    /// プレビュー上の座標を元画像の画素座標へ変換する。
+    /// </summary>
+    /// <remarks>
+    /// 余白を除いてから比率を掛けないと、指定した位置とずれる
+    /// （<see cref="TryGetPreviewLayout"/>）。
+    /// </remarks>
+    private Int32Rect? ToSourceRegion(Point a, Point b)
+    {
+        if (_lastBitmap is null || !TryGetPreviewLayout(out var layout))
+        {
+            return null;
+        }
+
+        var left = ToSource(
+            Math.Min(a.X, b.X), layout.MarginX, layout.DisplayWidth, _lastBitmap.PixelWidth);
+        var top = ToSource(
+            Math.Min(a.Y, b.Y), layout.MarginY, layout.DisplayHeight, _lastBitmap.PixelHeight);
+        var right = ToSource(
+            Math.Max(a.X, b.X), layout.MarginX, layout.DisplayWidth, _lastBitmap.PixelWidth);
+        var bottom = ToSource(
+            Math.Max(a.Y, b.Y), layout.MarginY, layout.DisplayHeight, _lastBitmap.PixelHeight);
 
         var width = right - left;
         var height = bottom - top;
 
         // 極端に小さい範囲は誤操作とみなす。
-        return width >= 16 && height >= 16 ? new Int32Rect(left, top, width, height) : null;
+        return width >= MinRegionSize && height >= MinRegionSize
+            ? new Int32Rect(left, top, width, height)
+            : null;
 
         static int ToSource(double value, double margin, double display, int sourceSize) =>
             Math.Clamp((int)Math.Round((value - margin) / display * sourceSize), 0, sourceSize);
@@ -976,6 +1637,13 @@ private void StartHotkey()
                 : $"{active.Name} — モデル未配置";
 
         DeleteApiKeyButton.IsEnabled = configured;
+
+        // キーの有無とバックエンドの選択で、選んだ言語が訳せるかは変わる。
+        // 一覧がまだできていない起動直後は何もしない（OnLoaded が後で呼ぶ）。
+        if (TargetLanguageCombo.ItemsSource is not null)
+        {
+            UpdateTargetLanguageNote();
+        }
     }
 
     private void OnSaveApiKeyClick(object sender, RoutedEventArgs e)
@@ -1037,6 +1705,84 @@ private void StartHotkey()
         StatusText.Text = "APIキーを削除しました。";
     }
 
+    // ===== 訳文の言語（FR-CFG-01） =====
+
+    /// <summary>
+    /// 一覧を作り、いまの値を選ぶ。
+    /// </summary>
+    /// <remarks>
+    /// <b>設定ファイルに一覧外のタグが書かれていても捨てない。</b>
+    /// 手で編集できる以上そうなりうるし、黙って日本語へ戻すと
+    /// 「書いたのに効いていない」ことに気づけない（RULES.md 🔵）。
+    /// </remarks>
+    private void SelectTargetLanguage(string tag)
+    {
+        var options = TargetLanguages.All.ToList();
+        if (TargetLanguages.Find(tag) is null)
+        {
+            options.Add(new TargetLanguageOption(tag, tag, LocalSupported: false));
+        }
+
+        _suppressLanguageChange = true;
+        TargetLanguageCombo.ItemsSource = options;
+        TargetLanguageCombo.SelectedItem =
+            options.Find(o => string.Equals(o.Tag, tag, StringComparison.OrdinalIgnoreCase));
+        _suppressLanguageChange = false;
+
+        UpdateTargetLanguageNote();
+    }
+
+    /// <summary>
+    /// 選んだ言語で訳せるのかを、翻訳を試す前に出す。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>日本語以外は同梱のモデルでは訳せない</b>（FR-TRN-03。v1.0 は en-ja のみ）。
+    /// 訳してみて初めて「対応していません」と出るのでは遅い。
+    /// <b>選んだ時点で分かる</b>ようにする。</para>
+    /// <para>「ローカルのみ」を選んでいる場合は、キーがあっても使われないため別に断る。</para>
+    /// </remarks>
+    private void UpdateTargetLanguageNote()
+    {
+        var tag = SelectedTargetLanguage;
+        if (TargetLanguages.LocalSupports(tag))
+        {
+            TargetLanguageNote.Text = "APIキーが無くても訳せます。translation.json に保存します。";
+            return;
+        }
+
+        var name = TargetLanguages.DisplayNameOf(tag);
+        TargetLanguageNote.Text = _translationOptions.Backend == TranslationBackendChoice.LocalOnly
+            ? $"「ローカルのみ」を選んでいるため、{name}には訳せません。"
+                + "下のバックエンドを「自動」にするか、日本語を選んでください。"
+            : _cloudTranslator.IsConfigured
+                ? $"{name}は同梱のモデルでは訳せないため、クラウド翻訳を使います。"
+                : $"{name}は同梱のモデルでは訳せません。下でAPIキーを登録してください。";
+    }
+
+    /// <summary>いま選ばれている言語のタグ。</summary>
+    private string SelectedTargetLanguage =>
+        TargetLanguageCombo.SelectedItem is TargetLanguageOption option
+            ? option.Tag
+            : _translationOptions.TargetLanguage;
+
+    private void OnTargetLanguageChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressLanguageChange || TargetLanguageCombo.SelectedItem is not TargetLanguageOption option)
+        {
+            return;
+        }
+
+        _translationOptions = _translationOptions with { TargetLanguage = option.Tag };
+        _translationOptions.Save();
+
+        // 覚えている訳文は言語ごとに分かれているが、切り替えた直後に前の言語の訳が
+        // 出ると「変わっていない」と見える。まとめて忘れる（FR-TRN-09 のキャッシュ）。
+        _translationCache.Clear();
+
+        UpdateTargetLanguageNote();
+        StatusText.Text = $"訳文の言語を{option.DisplayName}にしました。";
+    }
+
     /// <summary>
     /// モデル名などの設定ファイルを開く（FR-TRN-07 / RULES.md 🟡-3）。
     /// </summary>
@@ -1086,7 +1832,10 @@ private void StartHotkey()
             // ここは検証用のボタン。FR-TRN-06 の切り替えは入れていない。
             // どのバックエンドが何を返したかを、隠さずそのまま見るための経路。
             var result = await ActiveTranslator
-                .TranslateAsync(new TranslationRequest(source))
+                .TranslateAsync(new TranslationRequest(source)
+                {
+                    TargetLanguage = _translationOptions.TargetLanguage,
+                })
                 .ConfigureAwait(true);
 
             ResultText.Text = string.Join(Environment.NewLine,
@@ -1403,7 +2152,12 @@ private void StartHotkey()
             // FR-TRN-06: クラウドが混雑・上限・通信不良なら静かにローカルへ切り替える。
             // 切り替え先が自分自身のときは渡さない（同じものを 2 回試しても無駄）。
             var translated = await LineTranslation
-                .TranslateAsync(ActiveTranslator, blocks, FallbackTranslator, _translationCache)
+                .TranslateAsync(
+                    ActiveTranslator,
+                    blocks,
+                    FallbackTranslator,
+                    _translationCache,
+                    _translationOptions.TargetLanguage)
                 .ConfigureAwait(true);
 
             // FR-TRN-08: 数値が合わない行には原文を併記する。

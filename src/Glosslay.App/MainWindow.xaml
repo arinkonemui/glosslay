@@ -103,6 +103,13 @@
                     <TextBlock x:Name="TranslatorStateText" TextWrapping="Wrap" FontSize="11"
                                Foreground="#666" Text="確認中…" />
 
+                    <!-- FR-CFG-01 の「言語」。日本語以外はクラウド翻訳のキーが要る。 -->
+                    <TextBlock Text="訳文の言語" Margin="0,8,0,2" FontSize="11" />
+                    <ComboBox x:Name="TargetLanguageCombo" DisplayMemberPath="DisplayName"
+                              SelectionChanged="OnTargetLanguageChanged" />
+                    <TextBlock x:Name="TargetLanguageNote" TextWrapping="Wrap" Foreground="#666"
+                               FontSize="11" Margin="0,4,0,0" Text="" />
+
                     <!-- FR-TRN-01 / FR-TRN-06。自動で切り替わってほしくない人のための選択。
                          既定は「自動」で、キーが無くても動き、混雑しても止まらない。 -->
                     <TextBlock Text="使うバックエンド" Margin="0,8,0,2" FontSize="11" />
@@ -163,7 +170,43 @@
                          SelectionChanged="OnTargetSelectionChanged" />
             </GroupBox>
 
-            <Button Content="対象一覧を更新" Click="OnRefreshClick" Margin="0,0,0,4" />
+            <Button Content="対象一覧を更新" Click="OnRefreshClick" Margin="0,0,0,10" />
+
+            <!-- ここまでで作った設定（範囲・前処理・各モード）に名前を付けて残す。
+                 上の項目をまとめて保存するものなので、左側の最後に置いてある。 -->
+            <GroupBox Header="プロファイル (FR-CFG-01〜03)">
+                <StackPanel>
+                    <ComboBox x:Name="ProfileCombo" DisplayMemberPath="Name" />
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                        <Button Content="適用" Click="OnApplyProfileClick" FontWeight="SemiBold" />
+                        <Button Content="削除" Click="OnDeleteProfileClick" />
+                        <Button Content="読み直す" Click="OnReloadProfilesClick" />
+                    </StackPanel>
+
+                    <TextBlock Text="名前（空なら対象のタイトル）" Margin="0,10,0,2" FontSize="11" />
+                    <TextBox x:Name="ProfileNameBox" Padding="4,3" />
+
+                    <TextBlock Text="タイトルに含まれる文字列（任意）" Margin="0,6,0,2" FontSize="11" />
+                    <TextBox x:Name="ProfileTitleBox" Padding="4,3" />
+                    <TextBlock x:Name="ProfileTargetText" TextWrapping="Wrap" Foreground="#666"
+                               FontSize="11" Margin="0,4,0,0" Text="対象: —" />
+                    <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,4,0,0"
+                               Text="自動適用はウィンドウのクラス名で見分けます。Unity 製のゲームはどれも同じクラス名のため、クラス名だけでは別のゲームにも当たります。その場合はタイトルの変わらない部分を入れてください（「ゲーム名 - ステージ3」なら「ゲーム名」だけ）。" />
+
+                    <Button Content="現在の設定を保存" Click="OnSaveProfileClick" Margin="0,8,0,0"
+                            FontWeight="SemiBold" />
+
+                    <CheckBox x:Name="ProfileAutoApplyCheck" Margin="0,10,0,0"
+                              Content="前面のゲームに合わせて自動で切り替える"
+                              Checked="OnProfileAutoApplyChanged" Unchecked="OnProfileAutoApplyChanged" />
+                    <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,4,0,0"
+                               Text="当てはまるプロファイルが無いときは、今の設定をそのまま使います（勝手に解除しません）。保存したプロファイルが自動監視 ON を含む場合は、切り替わった時点で翻訳の呼び出しが始まります。設定は autoprofile.json で。" />
+
+                    <Button Content="profiles.json を開く" Click="OnOpenProfilesClick" Margin="0,8,0,0" />
+                    <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,4,0,0"
+                               Text="人が読める JSON です。1 件分をコピーして渡せば、他の人もそのゲームの設定をそのまま使えます (FR-CFG-03)。" />
+                </StackPanel>
+            </GroupBox>
         </StackPanel>
         </ScrollViewer>
 

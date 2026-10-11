@@ -22,6 +22,12 @@ public static class JsonSettings
         // 既定のエンコーダは日本語を \u3042 形式へ逃がす。手で直せなければ設定として意味がない。
         // UnsafeRelaxedJsonEscaping ではなく範囲指定にしているのは、< > & のエスケープを残すため。
         Encoder = JavaScriptEncoder.Create(UnicodeRanges.All),
+
+        // 列挙型は数字ではなく名前で書く。"Resampling": 1 では手で直せない（RULES.md 🔵）。
+        // 型ごとに [JsonConverter] を付ける形だと必ず付け忘れる。2026-10-11 に
+        // PreprocessOptions.Resampling と CursorModeOptions.Trigger が漏れていた
+        // （TranslationBackendChoice だけが付いていた）。読む側は名前も数字も受ける。
+        Converters = { new JsonStringEnumConverter() },
     };
 
     /// <summary>

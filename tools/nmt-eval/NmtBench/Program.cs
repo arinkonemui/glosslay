@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Diagnostics;
 using System.Text;
 using Glosslay.Ads;
@@ -8,6 +9,7 @@ using Glosslay.Imaging;
 using Glosslay.Input;
 using Glosslay.Monitoring;
 using Glosslay.Ocr;
+using Glosslay.Profiles;
 using Glosslay.Translation;
 
 namespace Glosslay.Bench;
@@ -56,8 +58,12 @@ internal static class Program
     {
         Console.OutputEncoding = Encoding.UTF8;
 
-        var modelDirectory = args.Length > 0
-            ? Path.GetFullPath(args[0])
+        // モデルの場所は最初の引数。--xxx は検査の指定なので位置引数として扱わない。
+        // これを見ていないと、モデルを読まない検査（--profiles 等）が
+        // 「モデルが足りません」で止まる。
+        var positional = args.FirstOrDefault(a => !a.StartsWith("--", StringComparison.Ordinal));
+        var modelDirectory = positional is not null
+            ? Path.GetFullPath(positional)
             : Path.GetFullPath(Path.Combine(
                 AppContext.BaseDirectory, "..", "..", "..", "..", "..",
                 "nmt-convert", "out", "elan-en-ja", "int8"));
@@ -119,6 +125,19 @@ internal static class Program
         if (args.Contains("--dwell", StringComparer.Ordinal))
         {
             return CheckDwell();
+        }
+
+        // --profiles: プロファイルの当て方と上限（FR-CFG-01〜03 / FR-SYS-10）を確かめる。
+        // モデルを読まない。
+        if (args.Contains("--profiles", StringComparer.Ordinal))
+        {
+            return CheckProfiles();
+        }
+
+        // --languages: 訳文の言語の扱い（FR-CFG-01 / FR-TRN-03）を確かめる。モデルを読まない。
+        if (args.Contains("--languages", StringComparer.Ordinal))
+        {
+            return await CheckLanguagesAsync().ConfigureAwait(false);
         }
 
         // --watch: 自動監視の守り（FR-MOD-02 / 04 / 05 / FR-OCR-07）を確かめる。モデルを読まない。
@@ -271,6 +290,269 @@ internal static class Program
     }
 
     /// <summary>
+    /// プロファイルの当て方・上限・交換を確かめる（FR-CFG-01〜03 / FR-SYS-10）。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>当ててはいけないものが当たることが一番危ない。</b>
+    /// 自動適用は前面のウィンドウを見て黙って設定を差し替えるため、
+    /// 別のゲームに当たると「設定が勝手に変わった」としか見えない。
+    /// Unity 製のゲームは同じクラス名（<c>UnityWndClass</c>）を使うため、
+    /// <b>クラス名だけでは足りない場合がある</b>ことをここで押さえる。</para>
+    /// <para><b>実物の <c>profiles.json</c> は触らない。</b>別のファイル名を渡し、
+    /// 最後に消す。検査で利用者のプロファイルを上書きしてはならない。</para>
+    /// </remarks>
+    private static int CheckProfiles()
+    {
+        var failures = 0;
+
+        void Check(string label, bool ok, string detail = "")
+        {
+            if (!ok)
+            {
+                failures++;
+            }
+
+            Console.WriteLine($"  {(ok ? "  " : "★ ")}{label,-44} {(ok ? "OK" : "NG"),-4}{detail}");
+        }
+
+        // クラス名だけのもの、タイトルでも絞るもの、何も指定しないものを並べる。
+        var elin = new Profile { Name = "Elin", WindowClass = "UnityWndClass" };
+        var subnautica = new Profile
+        {
+            Name = "Subnautica 2",
+            WindowClass = "UnityWndClass",
+            TitleContains = "Subnautica",
+        };
+        var empty = new Profile { Name = "空っぽ" };
+
+        Console.WriteLine("=== 当てはまる判定（FR-CFG-02）===");
+        Check("クラス名が一致すれば当たる", elin.Matches("UnityWndClass", "Elin"));
+        Check("クラス名が違えば当たらない", !elin.Matches("UnrealWindow", "Elin"));
+        Check("タイトルは部分一致で当たる", subnautica.Matches("UnityWndClass", "Subnautica 2 - Early Access"));
+        Check("タイトルは大小を無視する", subnautica.Matches("UnityWndClass", "SUBNAUTICA 2"));
+        Check("タイトルが違えば当たらない", !subnautica.Matches("UnityWndClass", "Elin"));
+
+        // どちらも空のプロファイルは、放っておくと全部のウィンドウに当たる。
+        Check("対象が空なら何にも当たらない", !empty.Matches("UnityWndClass", "Elin"));
+        Check("対象が空なら空のウィンドウにも当たらない", !empty.Matches(string.Empty, string.Empty));
+
+        Console.WriteLine();
+        Console.WriteLine("=== 使えないクラス名（2026-10-11 実測）===");
+
+        // WPF のウィンドウは起動ごとに変わる GUID を含む。保存しても次回は当たらない。
+        Check(
+            "WPF のクラス名は変わるものと判る",
+            WindowIdentity.IsVolatileClassName(
+                "HwndWrapper[Glosslay;;bc3063fb-5882-467e-8ca8-2c09baca2389]"));
+        Check("Unity のクラス名は使える", !WindowIdentity.IsVolatileClassName("UnityWndClass"));
+        Check("Unreal のクラス名は使える", !WindowIdentity.IsVolatileClassName("UnrealWindow"));
+        Check("空文字は変わるものではない", !WindowIdentity.IsVolatileClassName(string.Empty));
+
+        Console.WriteLine();
+        Console.WriteLine("=== 複数が当たるとき（先に登録したものを優先）===");
+
+        // Unity 製が 2 つ。絞っていない Elin が先にあるため、Subnautica でも Elin が当たる。
+        // これは実装どおりの挙動。利用者には「先に出した方」という説明ができる。
+        var ordered = new ProfileStore(profiles: [elin, subnautica], fileName: BenchProfileFile);
+        Check(
+            "先に登録した方が勝つ",
+            ordered.FindForWindow("UnityWndClass", "Subnautica 2")?.Name == "Elin",
+            "← クラス名だけの登録は後続を食う。タイトルでの絞り込みが要る");
+
+        var narrowedFirst = new ProfileStore(
+            profiles: [subnautica, elin], fileName: BenchProfileFile);
+        Check(
+            "絞った方を先に置けば当たる",
+            narrowedFirst.FindForWindow("UnityWndClass", "Subnautica 2")?.Name == "Subnautica 2");
+        Check(
+            "絞った方を先に置いても他は Elin",
+            narrowedFirst.FindForWindow("UnityWndClass", "Elin")?.Name == "Elin");
+        Check("当てはまらなければ null", ordered.FindForWindow("Notepad", "無題") is null);
+
+        Console.WriteLine();
+        Console.WriteLine("=== 保存と上限（FR-SYS-10 / RULES.md 🟡-4）===");
+
+        var path = JsonSettings.PathOf(BenchProfileFile);
+        try
+        {
+            var limited = new ProfileStore(
+                new CappedEntitlements(2), profiles: [], fileName: BenchProfileFile);
+
+            Check("1 件目は保存できる", limited.Save(elin) == ProfileSaveResult.Added);
+            Check("2 件目も保存できる", limited.Save(subnautica) == ProfileSaveResult.Added);
+            Check(
+                "上限を超えたら断る",
+                limited.Save(new Profile { Name = "3 件目", WindowClass = "X" })
+                    == ProfileSaveResult.LimitReached);
+
+            // 上限は「持てる数」であって「保存した回数」ではない。
+            Check(
+                "置き換えは上限に数えない",
+                limited.Save(elin with { TitleContains = "Elin" }) == ProfileSaveResult.Replaced);
+            Check("置き換えても件数は増えない", limited.Profiles.Count == 2);
+            Check("名前が空なら断る", limited.Save(new Profile()) == ProfileSaveResult.NameRequired);
+            Check("上限に達しても消せば入る", limited.Remove("Elin") && limited.Remaining == 1);
+
+            Console.WriteLine();
+            Console.WriteLine("=== 交換（FR-CFG-03）===");
+
+            var exported = ProfileStore.Export(subnautica);
+            var imported = ProfileStore.Import(exported);
+            Check("書き出して読み直すと同じ", imported == subnautica);
+            Check("日本語がそのまま読める", exported.Contains("Subnautica", StringComparison.Ordinal));
+
+            // 他の人から貰う前提のため、壊れていても例外で落とさない（RULES.md 🟡-6）。
+            Check("壊れた JSON は null（落ちない）", ProfileStore.Import("{ これは JSON ではない") is null);
+            Check("空文字も null", ProfileStore.Import(string.Empty) is null);
+            Check(
+                "知らない項目があっても読める",
+                ProfileStore.Import("""{ "Name": "未来版", "UnknownField": 1 }""")?.Name == "未来版");
+
+            Console.WriteLine();
+            Console.WriteLine("=== 列挙型の書式（RULES.md 🔵「人が読める JSON」）===");
+
+            // "Resampling": 1 では手で直せない。名前で書き、名前でも数字でも読めること。
+            Check(
+                "名前で書き出す",
+                exported.Contains("\"Resampling\": \"Bicubic\"", StringComparison.Ordinal),
+                exported.Contains("\"Resampling\": 1", StringComparison.Ordinal) ? "← 数字で出ている" : string.Empty);
+            Check(
+                "名前で読める",
+                ProfileStore.Import(
+                    """{ "Name": "名前", "Preprocess": { "Resampling": "Bilinear" } }""")
+                    ?.Preprocess.Resampling == ResamplingMode.Bilinear);
+
+            // 変換器を足す前に書かれた設定ファイルが読めなくなっては困る。
+            Check(
+                "数字でも読める（古い設定ファイル）",
+                ProfileStore.Import(
+                    """{ "Name": "名前", "Preprocess": { "Resampling": 0 } }""")
+                    ?.Preprocess.Resampling == ResamplingMode.Bilinear);
+
+            Console.WriteLine();
+            Console.WriteLine("=== 読み直し（手で編集した場合）===");
+            var onDisk = new ProfileStore(profiles: [], fileName: BenchProfileFile);
+            Check("一覧を渡したらファイルは読まない", onDisk.Profiles.Count == 0);
+
+            onDisk.Reload();
+            Check(
+                "Reload でファイルから読み直す",
+                onDisk.Profiles.Count == limited.Profiles.Count,
+                $"← {onDisk.Profiles.Count} 件");
+        }
+        finally
+        {
+            // 検査用のファイルは残さない。
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine(failures == 0 ? "すべて期待どおり。" : $"★ {failures} 件が期待と違う。");
+        return failures == 0 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// 訳文の言語の扱いを確かめる（FR-CFG-01 の「言語」/ FR-TRN-03）。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>一番危ないのは「訳せないのに成功して返る」こと。</b>
+    /// 同梱のモデルは英→日のみなので、英語を選んで訳させると
+    /// <b>日本語が出て、しかも成功として返りうる</b>。画面の表示だけで防ぐと、
+    /// 設定ファイルを手で書き換えた場合に素通りする。</para>
+    /// <para><b>モデルを読まない。</b>存在しないモデル置き場を渡し、
+    /// 言語の判定がモデルの有無より<b>先に</b>働くことを使って確かめる。
+    /// 日本語なら「モデルが無い」で止まり、英語なら「対応していない」で止まる。</para>
+    /// </remarks>
+    private static async Task<int> CheckLanguagesAsync()
+    {
+        var failures = 0;
+
+        void Check(string label, bool ok, string detail = "")
+        {
+            if (!ok)
+            {
+                failures++;
+            }
+
+            Console.WriteLine($"  {(ok ? "  " : "★ ")}{label,-44} {(ok ? "OK" : "NG"),-4}{detail}");
+        }
+
+        Console.WriteLine("=== 選択肢（FR-CFG-01）===");
+        Check("既定は日本語", TargetLanguages.All[0].Tag == TargetLanguages.Default);
+        Check("日本語はキー無しで訳せる", TargetLanguages.LocalSupports("ja"));
+        Check(
+            "ローカルで訳せるのは日本語だけ",
+            TargetLanguages.All.Count(o => o.LocalSupported) == 1,
+            $"← 全 {TargetLanguages.All.Count} 件");
+        Check("大小を無視して引ける", TargetLanguages.LocalSupports("JA"));
+        Check("知らないタグは訳せない扱い", !TargetLanguages.LocalSupports("de"));
+        Check("知らないタグはそのまま表示する", TargetLanguages.DisplayNameOf("de") == "de");
+
+        Console.WriteLine();
+        Console.WriteLine("=== ローカルが断るか（FR-TRN-03）===");
+
+        // 実在しない置き場。モデルを読まずに判定の順序だけを見る。
+        var noModel = new LocalNmtOptions
+        {
+            ModelDirectory = Path.Combine(Path.GetTempPath(), "glosslay-no-such-model"),
+        };
+
+        using var local = new LocalNmtTranslator(noModel);
+
+        var japanese = await local
+            .TranslateAsync(new TranslationRequest("Attack Power") { TargetLanguage = "ja" })
+            .ConfigureAwait(false);
+
+        var english = await local
+            .TranslateAsync(new TranslationRequest("ダメージ") { TargetLanguage = "en" })
+            .ConfigureAwait(false);
+
+        Check(
+            "日本語は言語では断らない",
+            japanese.Outcome == TranslationOutcome.NotConfigured,
+            $"← {japanese.Outcome}（モデルが無いので止まる）");
+        Check(
+            "英語はモデルの有無より先に断る",
+            english.Outcome == TranslationOutcome.Unsupported,
+            $"← {english.Outcome}");
+        Check(
+            "断る理由を言葉で返す",
+            english.Message?.Contains("APIキー", StringComparison.Ordinal) == true,
+            $"← {english.Message}");
+
+        // FR-TRN-06: 対応していない言語では切り替えない。切り替えても同じ結果になる。
+        Check("対応しない言語では切り替えない", !english.ShouldFallBack);
+
+        Console.WriteLine();
+        Console.WriteLine(failures == 0 ? "すべて期待どおり。" : $"★ {failures} 件が期待と違う。");
+        return failures == 0 ? 0 : 1;
+    }
+
+    /// <summary>検査用のプロファイル置き場。実物（<c>profiles.json</c>）とは分ける。</summary>
+    private const string BenchProfileFile = "profiles.bench.json";
+
+    /// <summary>件数だけを絞る資格サービス。上限の判定を通すために使う。</summary>
+    private sealed class CappedEntitlements(int maxProfiles) : IEntitlementService
+    {
+        public EntitlementTier Tier => EntitlementTier.Free;
+
+        public int MaxWatchedRegions => 1;
+
+        public int MaxProfiles => maxProfiles;
+
+        public int MaxGlossaryEntries => 0;
+
+        public int MaxHistoryEntries => 0;
+
+        public bool CanSearchHistory => false;
+
+        public bool ShowsAds => true;
+    }
+
+    /// <summary>
     /// カーソル静止の判定を確かめる（FR-MOD-10 / FR-MOD-11）。
     /// </summary>
     /// <remarks>
@@ -412,6 +694,51 @@ internal static class Program
         }
 
         Console.WriteLine($"  {(ok5 ? "  " : "★ ")}翻訳しなかった回は上限を消費しない    残り {counted.Remaining}/5（期待 5/5）");
+
+        Console.WriteLine();
+        Console.WriteLine("=== 初回の案内（FR-MOD-08）===");
+
+        void CheckText(string label, bool ok, string detail = "")
+        {
+            if (!ok)
+            {
+                failures++;
+            }
+
+            Console.WriteLine($"  {(ok ? "  " : "★ ")}{label,-40} {(ok ? "OK" : "NG"),-4}{detail}");
+        }
+
+        var noticeOptions = new AutoWatchOptions();
+        var whole = AutoWatchNotice.Build(noticeOptions, hasRegion: false);
+        var narrowed = AutoWatchNotice.Build(noticeOptions, hasRegion: true);
+
+        // 文面の役目は「どれだけ時間と呼び出しを使うか」を渡すこと。
+        // 数字が消えていたら案内の意味がない。
+        CheckText(
+            "上限の回数が文面に出る",
+            whole.Contains(noticeOptions.MaxCallsPerHour.ToString(CultureInfo.CurrentCulture), StringComparison.Ordinal));
+        CheckText("見回りの間隔が文面に出る", whole.Contains("0.5 秒ごと", StringComparison.Ordinal));
+        CheckText("やめる判断ができる文で終わる", whole.TrimEnd().EndsWith("入れますか？", StringComparison.Ordinal));
+        CheckText("クラウドの遅さを断っている", whole.Contains("クラウド", StringComparison.Ordinal));
+
+        // 絞っていない人には「絞れば半分以下」が一番効く。絞っている人には邪魔。
+        CheckText("絞っていなければ絞る案内を出す", whole.Contains("範囲を絞ると", StringComparison.Ordinal));
+        CheckText("絞っていれば出さない", !narrowed.Contains("範囲を絞ると", StringComparison.Ordinal));
+
+        var wide = AutoWatchNotice.Estimate(hasRegion: false);
+        var tight = AutoWatchNotice.Estimate(hasRegion: true);
+        CheckText(
+            "範囲を絞った方が速い",
+            tight.Slowest < wide.Fastest,
+            $"← 約 {tight.Slowest.TotalSeconds:0.#} 秒 対 {wide.Fastest.TotalSeconds:0.#}〜{wide.Slowest.TotalSeconds:0.#} 秒");
+
+        // 性能要件は 1.5 秒（PLAN.md 課題4）。絞れば収まり、全画面では収まらない。
+        CheckText("絞れば 1.5 秒に収まる", tight.Slowest <= TimeSpan.FromSeconds(1.5));
+        CheckText("全画面は収まらないと分かる", wide.Fastest > TimeSpan.FromSeconds(1.5));
+
+        Console.WriteLine();
+        Console.WriteLine("--- 絞っていないときの文面 ---");
+        Console.WriteLine(whole);
 
         Console.WriteLine();
         Console.WriteLine(failures == 0 ? "すべて期待どおり。" : $"★ {failures} 件が期待と違う。");

@@ -104,6 +104,19 @@ public sealed class LocalNmtTranslator : ITranslator
             return new TranslationResult(string.Empty, TranslationOutcome.Succeeded, stopwatch.Elapsed);
         }
 
+        // 同梱のモデルは英→日のみ（FR-TRN-03）。指定された言語を見ずに訳すと、
+        // 英語を選んでいるのに日本語が出て、しかも「成功」として返ってしまう。
+        // モデルの有無より先に見る。モデルを置いても、この言語は訳せない。
+        if (!TargetLanguages.LocalSupports(request.TargetLanguage))
+        {
+            return TranslationResult.Failure(
+                TranslationOutcome.Unsupported,
+                $"同梱の翻訳モデルは{TargetLanguages.DisplayNameOf(TargetLanguages.Default)}へのみ対応しています。"
+                + $"{TargetLanguages.DisplayNameOf(request.TargetLanguage)}へ訳すには"
+                + "クラウド翻訳のAPIキーが必要です。",
+                stopwatch.Elapsed);
+        }
+
         var missing = _options.RequiredFiles().Where(p => !File.Exists(p)).ToList();
         if (missing.Count > 0)
         {

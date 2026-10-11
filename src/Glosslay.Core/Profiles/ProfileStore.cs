@@ -35,13 +35,24 @@ public sealed class ProfileStore
 
     private readonly IEntitlementService _entitlements;
     private readonly List<Profile> _profiles;
+    private readonly string _fileName;
 
     /// <param name="entitlements">件数の上限（FR-SYS-10）。</param>
     /// <param name="profiles">読み込み済みの一覧。<c>null</c> ならファイルから読む。</param>
-    public ProfileStore(IEntitlementService? entitlements = null, IEnumerable<Profile>? profiles = null)
+    /// <param name="fileName">
+    /// 書き出す先。<c>null</c> なら <see cref="FileName"/>。
+    /// <b>検査（<c>NmtBench --profiles</c>）が実物の設定を壊さないために差し替える。</b>
+    /// 保存の成否は上限の判定と同じ経路で確かめたいが、そのために
+    /// 利用者のプロファイルを上書きするのは割に合わない。
+    /// </param>
+    public ProfileStore(
+        IEntitlementService? entitlements = null,
+        IEnumerable<Profile>? profiles = null,
+        string? fileName = null)
     {
         _entitlements = entitlements ?? FreeOnlyEntitlementService.Default;
-        _profiles = [.. profiles ?? LoadFromFile()];
+        _fileName = fileName ?? FileName;
+        _profiles = [.. profiles ?? LoadFromFile(_fileName)];
     }
 
     /// <summary>保存されているプロファイル。</summary>
@@ -102,6 +113,21 @@ public sealed class ProfileStore
     public Profile? Find(string name) => _profiles.Find(p => NameEquals(p.Name, name));
 
     /// <summary>
+    /// ファイルから読み直す（FR-CFG-03 のインポート）。
+    /// </summary>
+    /// <remarks>
+    /// <b>他の人から貰った 1 件を貼り付ける経路がこれ。</b>
+    /// 専用の取り込み画面を作らず、交換できる JSON をそのまま編集してもらう。
+    /// 壊れていれば <see cref="JsonSettings.Load"/> が空の一覧に倒すため、例外では落ちない
+    /// （RULES.md 🟡-6）。
+    /// </remarks>
+    public void Reload()
+    {
+        _profiles.Clear();
+        _profiles.AddRange(LoadFromFile(_fileName));
+    }
+
+    /// <summary>
     /// このウィンドウに当てはまるプロファイルを探す（FR-CFG-02）。
     /// </summary>
     /// <remarks>
@@ -125,10 +151,10 @@ public sealed class ProfileStore
     /// </remarks>
     public static Profile? Import(string json) => JsonSettings.Deserialize<Profile>(json);
 
-    private void Persist() => JsonSettings.Save(FileName, _profiles);
+    private void Persist() => JsonSettings.Save(_fileName, _profiles);
 
-    private static List<Profile> LoadFromFile() =>
-        JsonSettings.Load(FileName, () => new List<Profile>());
+    private static List<Profile> LoadFromFile(string fileName) =>
+        JsonSettings.Load(fileName, () => new List<Profile>());
 
     private static bool NameEquals(string a, string b) =>
         string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
