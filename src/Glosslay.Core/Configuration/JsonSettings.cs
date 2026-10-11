@@ -59,6 +59,35 @@ public static class JsonSettings
         File.WriteAllText(PathOf(fileName), JsonSerializer.Serialize(value, SerializerOptions));
     }
 
+    /// <summary>
+    /// 同じ書式で文字列にする（ファイルを介さない受け渡し。FR-CFG-03 のエクスポート）。
+    /// </summary>
+    /// <remarks>
+    /// <see cref="SerializerOptions"/> を外へ出さずに済ませるためのもの。
+    /// 書式の指定が 2 か所に分かれると、片方だけ直して日本語が <c>あ</c> 形式に戻る。
+    /// </remarks>
+    public static string Serialize<T>(T value) => JsonSerializer.Serialize(value, SerializerOptions);
+
+    /// <summary>
+    /// 同じ書式で読む。壊れていれば <c>null</c>。
+    /// </summary>
+    /// <remarks>
+    /// <b>受け取った JSON を信用しない。</b>他の人から貰うことを想定しているため、
+    /// 例外で落とさない（RULES.md 🟡-6）。
+    /// </remarks>
+    public static T? Deserialize<T>(string json)
+        where T : class
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<T>(json, SerializerOptions);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>設定ファイルの絶対パス。</summary>
     public static string PathOf(string fileName) => Path.Combine(GlosslayPaths.Root, fileName);
 }

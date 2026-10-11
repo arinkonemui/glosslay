@@ -70,6 +70,10 @@ EnumWindows
 IsWindowVisible
 GetWindowTextW
 GetWindowTextLengthW
+// ウィンドウのクラス名。プロファイルの自動適用（FR-CFG-02）で使う。
+// タイトルは遊んでいる最中に変わる（「ゲーム名 - ステージ3」等）が、クラス名は固定。
+// ウィンドウに問い合わせるだけで、ゲームプロセスには触れない（RULES.md 🔴-1）。
+GetClassNameW
 GetClientRect
 GetWindowRect
 MonitorFromWindow
