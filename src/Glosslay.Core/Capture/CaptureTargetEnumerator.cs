@@ -13,8 +13,11 @@ namespace Glosslay.Capture;
 /// <remarks>
 /// <para>ウィンドウはタイトルとハンドルだけを見る。ゲームプロセスを開いたりハンドルを取得したりはしない
 /// （RULES.md 🔴-1）。</para>
-/// <para>FR-CAP-04 の「プロセス名で次回以降自動再選択する」はプロセス名の取得方法を決めてから実装する。
-/// v0.5 のタスクであり、PoC では対象外。</para>
+/// <para><b>FR-CAP-04 の「次回以降の自動再選択」はプロセス名を使わない</b>（2026-10-12 変更）。
+/// プロセス名を得るにはプロセスハンドルを開く必要があり、RULES.md 🔴-1 に触れる。
+/// 見分けるのは<b>ウィンドウのクラス名とタイトル</b>で、FR-CFG-02 と同じ仕組みを使う
+/// （<see cref="WindowIdentity"/> と <c>Profile.Matches</c>）。
+/// <b>判定をここに持たせない。</b>同じことを 2 か所に書くと、片方だけ直して食い違う。</para>
 /// </remarks>
 public static class CaptureTargetEnumerator
 {
