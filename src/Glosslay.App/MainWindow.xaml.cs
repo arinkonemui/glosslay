@@ -17,6 +17,7 @@ using Glosslay.Monitoring;
 using Glosslay.Ocr;
 using Glosslay.Profiles;
 using Glosslay.Translation;
+using Glosslay.Usage;
 
 namespace Glosslay;
 
@@ -132,6 +133,28 @@ public partial class MainWindow : Window, IDisposable
 
     /// <summary>自動監視の見回り。</summary>
     private DispatcherTimer? _watchTimer;
+
+    /// <summary>使用量の記録（RULES.md 🟡-8）。</summary>
+    private readonly UsageStore _usage = new();
+
+    /// <summary>使用量の常駐表示の設定。<b>既定は OFF。</b></summary>
+    private UsageOverlayOptions _usageOverlayOptions = UsageOverlayOptions.Load();
+
+    /// <summary>使用量の常駐表示。使うときだけ作る。</summary>
+    private UsageOverlayWindow? _usageOverlay;
+
+    /// <summary>
+    /// 自動呼び出しの残りを見直す間隔。
+    /// </summary>
+    /// <remarks>
+    /// <b>残りは翻訳しなくても増える</b>（直近 1 時間の移動窓から外れるため）。
+    /// 翻訳のたびの更新だけでは「戻ったこと」が画面に出ない。
+    /// 30 秒は、200 回/時 の目盛りに対して十分細かい。
+    /// </remarks>
+    private static readonly TimeSpan UsageRefreshInterval = TimeSpan.FromSeconds(30);
+
+    /// <summary>使用量の表示を定期的に見直す。</summary>
+    private DispatcherTimer? _usageTimer;
 
     /// <summary>ゲームごとの設定（FR-CFG-01）。上限は資格サービスを経由する。</summary>
     private readonly ProfileStore _profileStore;
@@ -1021,6 +1044,19 @@ private void StartHotkey()
         ProfileAutoApplyCheck.IsChecked = _profileOptions.AutoApply;
         SetProfileAutoApply(_profileOptions.AutoApply);
 
+        // RULES.md 🟡-8: 使用量は起動した時点から見えていること。
+        RefreshUsage();
+        UsageOverlayCheck.IsChecked = _usageOverlayOptions.Enabled;
+        SetUsageOverlay(_usageOverlayOptions.Enabled);
+
+        // 自動呼び出しの残りは、翻訳しなくても時間とともに戻る。
+        _usageTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = UsageRefreshInterval,
+        };
+        _usageTimer.Tick += (_, _) => RefreshUsage();
+        _usageTimer.Start();
+
         // FR-OCR-08: 初回 OCR で待たせないよう、起動時に非同期でモデルを読み込んでおく。
         _ = WarmUpOcrAsync();
 
@@ -1081,6 +1117,10 @@ private void StartHotkey()
         _dwellTimer = null;
         _profileTimer?.Stop();
         _profileTimer = null;
+        _usageTimer?.Stop();
+        _usageTimer = null;
+        _usageOverlay?.Close();
+        _usageOverlay = null;
         ReleaseCapture();
         _overlay?.Close();
         _inputTrigger?.Dispose();
@@ -1696,6 +1736,127 @@ private void StartHotkey()
         };
     }
 
+    // ===== 使用量（RULES.md 🟡-8） =====
+
+    /// <summary>
+    /// 翻訳の呼び出しを使用量に数える（オーバーレイ経路）。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>切り替えが起きた場合は 2 回ぶん数える。</b>クラウドで失敗してローカルで成功したとき、
+    /// <b>クラウドへの通信は実際に発生している</b>。失敗したから無かったことにはならない。</para>
+    /// <para>呼んだ回数は <see cref="LineTranslationResult.CallCount"/> を見る。
+    /// 全部キャッシュに当たった場合は 0 で、そのときは何も数えない。</para>
+    /// </remarks>
+    private void RecordUsage(LineTranslationResult result)
+    {
+        if (result.FellBackFrom is { } failed)
+        {
+            _usage.RecordCloud(failed.TotalTokens, succeeded: false);
+        }
+
+        // 切り替えが起きた場合、CallCount は 2。上で 1 回ぶん数えたので残りは 1 回。
+        if (result.CallCount > (result.FellBackFrom is null ? 0 : 1))
+        {
+            RecordOneCall(result.Backend, result.Translation);
+        }
+
+        _usage.RecordCached(result.CachedCount);
+        RefreshUsage();
+    }
+
+    /// <summary>翻訳の呼び出しを 1 回ぶん数える（検証用ボタンの経路）。</summary>
+    private void RecordOneCall(string backend, TranslationResult translation)
+    {
+        if (IsCloudBackend(backend))
+        {
+            _usage.RecordCloud(translation.TotalTokens, translation.IsSuccess);
+        }
+        else
+        {
+            _usage.RecordLocal();
+        }
+    }
+
+    /// <summary>
+    /// 費用がかかるバックエンドか。
+    /// </summary>
+    /// <remarks>
+    /// <b><see cref="ITranslator"/> に「費用がかかるか」は持たせていない。</b>
+    /// 差し替え点を増やさずに済むうえ、名前は FR-TRN-13 のバッジで既に画面へ出しているものと同じで、
+    /// <b>利用者が見ている文字列と数えている基準が一致する。</b>
+    /// </remarks>
+    private bool IsCloudBackend(string backend) =>
+        string.Equals(backend, _cloudTranslator.Name, StringComparison.Ordinal);
+
+    /// <summary>画面に出ている使用量を今の値にする。</summary>
+    private void RefreshUsage()
+    {
+        var today = _usage.Today;
+        var remaining = _autoCallLimiter.Remaining;
+        var maxCalls = _autoCallLimiter.MaxCalls;
+
+        UsageText.Text = UsageSummary.Detail(today, remaining, maxCalls);
+
+        // 訳文に添える 1 行と、常駐表示は同じ文言を使う（食い違わせない）。
+        var oneLine = UsageSummary.OneLine(today, remaining, maxCalls);
+        if (_overlay is { } overlay)
+        {
+            overlay.UsageNote = oneLine;
+        }
+
+        _usageOverlay?.Update(oneLine);
+    }
+
+    /// <summary>
+    /// 使用量の常駐表示を出す / 消す（RULES.md 🟡-8）。
+    /// </summary>
+    /// <remarks>
+    /// <b>既定は OFF。</b>出しっぱなしの表示は「モニタが1枚でも邪魔されずに遊べる」という
+    /// ゴールと衝突するため、欲しい人だけが入れる形にしてある（2026-10-12 の人間の判断）。
+    /// </remarks>
+    private void SetUsageOverlay(bool enabled)
+    {
+        if (_usageOverlayOptions.Enabled != enabled)
+        {
+            _usageOverlayOptions = _usageOverlayOptions with { Enabled = enabled };
+            _usageOverlayOptions.Save();
+        }
+
+        if (!enabled)
+        {
+            _usageOverlay?.Close();
+            _usageOverlay = null;
+            StatusText.Text = "使用量の常駐表示: 消しました。";
+            return;
+        }
+
+        _usageOverlay ??= new UsageOverlayWindow();
+        _usageOverlay.Show();
+        _usageOverlay.Apply(_usageOverlayOptions);
+        RefreshUsage();
+
+        // クリックスルーが効いていなければ、ゲームのクリックを奪う。黙って出さない。
+        StatusText.Text = _usageOverlay.StyleState.IsComplete
+            ? "使用量の常駐表示: 画面の隅に出しました（クリックは下へ通ります）。"
+            : "使用量の常駐表示: クリックスルーが効いていません。消すことをおすすめします。";
+    }
+
+    private void OnUsageOverlayChanged(object sender, RoutedEventArgs e) =>
+        SetUsageOverlay(UsageOverlayCheck.IsChecked == true);
+
+    private void OnOpenUsageClick(object sender, RoutedEventArgs e)
+    {
+        var path = JsonSettings.PathOf(UsageStore.FileName);
+        if (!File.Exists(path))
+        {
+            StatusText.Text = "まだ記録がありません。翻訳を 1 回実行すると作られます。";
+            return;
+        }
+
+        Process.Start(new ProcessStartInfo(path) { UseShellExecute = true })?.Dispose();
+        StatusText.Text = $"usage.json を開きました（直近 {UsageStore.KeepDays} 日ぶん。送信はしません）。";
+    }
+
     private void OnDeleteApiKeyClick(object sender, RoutedEventArgs e)
     {
         _apiKeyStore.Delete();
@@ -1837,6 +1998,10 @@ private void StartHotkey()
                     TargetLanguage = _translationOptions.TargetLanguage,
                 })
                 .ConfigureAwait(true);
+
+            // RULES.md 🟡-8。検証用のボタンでも呼び出しは起きている。
+            RecordOneCall(ActiveTranslator.Name, result);
+            RefreshUsage();
 
             ResultText.Text = string.Join(Environment.NewLine,
                 $"バックエンド : {ActiveTranslator.Name}",
@@ -2159,6 +2324,10 @@ private void StartHotkey()
                     _translationCache,
                     _translationOptions.TargetLanguage)
                 .ConfigureAwait(true);
+
+            // RULES.md 🟡-8: 呼んだぶんを数える。訳文を重ねる前に数えて、
+            // この翻訳のぶんが訳文の隅にも反映されるようにする。
+            RecordUsage(translated);
 
             // FR-TRN-08: 数値が合わない行には原文を併記する。
             var overlayLines = BuildOverlayLines(blocks, translated);

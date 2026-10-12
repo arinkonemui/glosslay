@@ -11,6 +11,7 @@ using Glosslay.Monitoring;
 using Glosslay.Ocr;
 using Glosslay.Profiles;
 using Glosslay.Translation;
+using Glosslay.Usage;
 
 namespace Glosslay.Bench;
 
@@ -138,6 +139,12 @@ internal static class Program
         if (args.Contains("--languages", StringComparer.Ordinal))
         {
             return await CheckLanguagesAsync().ConfigureAwait(false);
+        }
+
+        // --usage: 使用量の数え方と文面（RULES.md 🟡-8）を確かめる。モデルを読まない。
+        if (args.Contains("--usage", StringComparer.Ordinal))
+        {
+            return CheckUsage();
         }
 
         // --watch: 自動監視の守り（FR-MOD-02 / 04 / 05 / FR-OCR-07）を確かめる。モデルを読まない。
@@ -530,6 +537,146 @@ internal static class Program
         Console.WriteLine(failures == 0 ? "すべて期待どおり。" : $"★ {failures} 件が期待と違う。");
         return failures == 0 ? 0 : 1;
     }
+
+    /// <summary>
+    /// 使用量の数え方と文面を確かめる（RULES.md 🟡-8「使用量を常時表示」）。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>課金に直結する数字なので、数え違いが一番こわい。</b>
+    /// クラウドとローカルを取り違える、失敗を数えない、日をまたいでも積み続ける —
+    /// どれも「予期しない課金」を防ぐという目的を裏切る。</para>
+    /// <para><b>実物の <c>usage.json</c> は触らない。</b>別のファイル名を渡し、最後に消す。</para>
+    /// </remarks>
+    private static int CheckUsage()
+    {
+        var failures = 0;
+
+        void Check(string label, bool ok, string detail = "")
+        {
+            if (!ok)
+            {
+                failures++;
+            }
+
+            Console.WriteLine($"  {(ok ? "  " : "★ ")}{label,-44} {(ok ? "OK" : "NG"),-4}{detail}");
+        }
+
+        var path = JsonSettings.PathOf(BenchUsageFile);
+        try
+        {
+            var clock = new FakeClock(DateTimeOffset.UnixEpoch);
+            var store = new UsageStore(clock, days: [], fileName: BenchUsageFile);
+
+            Console.WriteLine("=== 数え方（RULES.md 🟡-8）===");
+
+            store.RecordCloud(tokens: 1200, succeeded: true);
+            store.RecordCloud(tokens: 800, succeeded: true);
+            Check("クラウドの回数を数える", store.Today.CloudCalls == 2);
+            Check("トークンを足し上げる", store.Today.CloudTokens == 2000);
+
+            // 通信は起きている。失敗したから無かったことにはならない。
+            store.RecordCloud(tokens: null, succeeded: false);
+            Check("失敗も呼び出しに数える", store.Today.CloudCalls == 3);
+            Check("失敗の数は別に持つ", store.Today.CloudFailures == 1);
+            Check("トークン不明は 0 として足す", store.Today.CloudTokens == 2000);
+
+            // 費用がかからないものを混ぜると、見た数字の意味が分からなくなる。
+            store.RecordLocal();
+            Check("ローカルは別に数える", store.Today.LocalCalls == 1);
+            Check("ローカルはクラウドに混ぜない", store.Today.CloudCalls == 3);
+
+            store.RecordCached(5);
+            Check("使い回した行を数える", store.Today.CachedLines == 5);
+            store.RecordCached(0);
+            Check("0 行は数えない", store.Today.CachedLines == 5);
+
+            Console.WriteLine();
+            Console.WriteLine("=== 日をまたぐ ===");
+
+            clock.Advance(TimeSpan.FromDays(1));
+            Check("翌日は 0 から始まる", store.Today.CloudCalls == 0);
+
+            // 見ただけで日を作らない。使わなかった日の空の記録を残す意味がない。
+            Check("見るだけでは日を作らない", store.Days.Count == 1);
+
+            store.RecordCloud(tokens: 10, succeeded: true);
+            Check("翌日のぶんは翌日に積む", store.Today.CloudCalls == 1);
+            Check("前日の記録は残る", store.Days.Count == 2);
+
+            // 使用量の記録それ自体が無制限に膨らむのは筋が通らない。
+            clock.Advance(TimeSpan.FromDays(UsageStore.KeepDays + 1));
+            store.RecordLocal();
+            Check(
+                $"{UsageStore.KeepDays} 日より古い記録は落とす",
+                store.Days.Count == 1,
+                $"← 残り {store.Days.Count} 日ぶん");
+
+            Console.WriteLine();
+            Console.WriteLine("=== 書き出しと読み直し ===");
+            var reread = new UsageStore(clock, days: null, fileName: BenchUsageFile);
+            Check("ファイルから読み直せる", reread.Days.Count == store.Days.Count);
+            Check("今日のぶんが一致する", reread.Today.LocalCalls == store.Today.LocalCalls);
+
+            Console.WriteLine();
+            Console.WriteLine("=== 文面 ===");
+
+            var busy = new UsageDay
+            {
+                Date = DateOnly.FromDateTime(DateTime.Today),
+                CloudCalls = 42,
+                CloudTokens = 12_345,
+                LocalCalls = 7,
+                CachedLines = 31,
+            };
+            var quiet = new UsageDay { Date = busy.Date };
+
+            var oneLine = UsageSummary.OneLine(busy, remaining: 158, maxCalls: 200);
+            var detail = UsageSummary.Detail(busy, remaining: 158, maxCalls: 200);
+
+            Check("1 行はクラウドから始まる", oneLine.StartsWith("今日 クラウド", StringComparison.Ordinal));
+            Check("1 行に回数が出る", oneLine.Contains("42", StringComparison.Ordinal));
+
+            // ふだんは残りを出さない。狭い場所で肝心の数字が読みにくくなる。
+            Check("余裕があれば残りを出さない", !oneLine.Contains("自動の残り", StringComparison.Ordinal));
+
+            var low = UsageSummary.OneLine(busy, remaining: 20, maxCalls: 200);
+            Check("残りが減ったら添える", low.Contains("自動の残り", StringComparison.Ordinal));
+
+            // 使っていないことが伝わらないと、確かめる意味がない。
+            var none = UsageSummary.OneLine(quiet, remaining: 200, maxCalls: 200);
+            Check("使っていなければそう言う", none.Contains("なし", StringComparison.Ordinal));
+            Check(
+                "明細では費用が出ないと言う",
+                UsageSummary.Detail(quiet, 200, 200).Contains("費用は発生していません", StringComparison.Ordinal));
+
+            Check("明細はクラウドとローカルを分ける",
+                detail.Contains("クラウド翻訳", StringComparison.Ordinal)
+                && detail.Contains("ローカル翻訳", StringComparison.Ordinal));
+            Check("明細に残りが出る", detail.Contains("自動呼び出しの残り", StringComparison.Ordinal));
+
+            Console.WriteLine();
+            Console.WriteLine("--- 1 行 ---");
+            Console.WriteLine($"  {oneLine}");
+            Console.WriteLine($"  {low}");
+            Console.WriteLine($"  {none}");
+            Console.WriteLine("--- 明細 ---");
+            Console.WriteLine(detail);
+        }
+        finally
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine(failures == 0 ? "すべて期待どおり。" : $"★ {failures} 件が期待と違う。");
+        return failures == 0 ? 0 : 1;
+    }
+
+    /// <summary>検査用の使用量の置き場。実物（<c>usage.json</c>）とは分ける。</summary>
+    private const string BenchUsageFile = "usage.bench.json";
 
     /// <summary>検査用のプロファイル置き場。実物（<c>profiles.json</c>）とは分ける。</summary>
     private const string BenchProfileFile = "profiles.bench.json";

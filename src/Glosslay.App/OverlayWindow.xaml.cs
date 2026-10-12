@@ -67,6 +67,18 @@ public partial class OverlayWindow : Window
     /// </remarks>
     public TimeSpan AutoHideAfter { get; set; } = TimeSpan.FromSeconds(10);
 
+    /// <summary>
+    /// 訳文の隅に小さく添える使用量（RULES.md 🟡-8「使用量を常時表示」）。空なら出さない。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>モニタが1枚の人が、ゲーム中に使用量を見られる唯一の機会がここ。</b>
+    /// 操作ウィンドウはゲームの裏に隠れている。</para>
+    /// <para><b>呼び出した直後に出るので因果が直結する。</b>訳文が出た＝いま 1 回使った、
+    /// という対応が一目で分かる。常駐表示（<c>UsageOverlayWindow</c>）と違い、
+    /// <b>ゲーム画面を新たに覆わない</b> — どのみち訳文が出ている間だけ。</para>
+    /// </remarks>
+    public string UsageNote { get; set; } = string.Empty;
+
     protected override void OnSourceInitialized(EventArgs e)
     {
         base.OnSourceInitialized(e);
@@ -282,6 +294,43 @@ public partial class OverlayWindow : Window
             Canvas.SetTop(label, line.Box.Y * scaleY);
             LayerCanvas.Children.Add(label);
         }
+
+        AddUsageNote();
+    }
+
+    /// <summary>
+    /// 使用量を右下の隅に小さく添える（RULES.md 🟡-8）。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>右下に置く。</b>訳文は原文の位置に重なるため、どこに出るか決め打ちできない。
+    /// 隅のうち右下は、ゲームの体力・弾数などの表示（左上と下辺中央に多い）と最も当たりにくい。</para>
+    /// <para><b>訳文より薄く小さくする。</b>読みに来たときだけ読めればよく、
+    /// 訳文から視線を奪ってはいけない。</para>
+    /// </remarks>
+    private void AddUsageNote()
+    {
+        if (UsageNote.Length == 0)
+        {
+            return;
+        }
+
+        var note = new TextBlock
+        {
+            Text = UsageNote,
+            FontSize = Math.Max(10, Height / 90),
+            Foreground = new SolidColorBrush(Color.FromRgb(0xE0, 0xE0, 0xE0)),
+            Background = new SolidColorBrush(Color.FromArgb(0xB0, 0, 0, 0)),
+            Padding = new Thickness(5, 2, 5, 2),
+            TextWrapping = TextWrapping.NoWrap,
+        };
+
+        // 実寸が決まらないと右下に寄せられない。
+        note.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+
+        var margin = Math.Max(6, Height / 120);
+        Canvas.SetLeft(note, Math.Max(0, Width - note.DesiredSize.Width - margin));
+        Canvas.SetTop(note, Math.Max(0, Height - note.DesiredSize.Height - margin));
+        LayerCanvas.Children.Add(note);
     }
 
     /// <summary>

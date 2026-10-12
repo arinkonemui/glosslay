@@ -1,0 +1,32 @@
+<Window x:Class="Glosslay.UsageOverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Glosslay Usage"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ShowActivated="False"
+        ResizeMode="NoResize"
+        SizeToContent="WidthAndHeight"
+        Focusable="False"
+        IsHitTestVisible="False">
+
+    <!--
+        使用量の常駐表示（RULES.md 🟡-8「使用量を常時表示」）。既定は OFF。
+
+        訳文オーバーレイ（OverlayWindow）とは別のウィンドウにしてある。
+        訳文は 10 秒で消えるが、こちらは出しっぱなしにするため、
+        自動フェードや前面追従の仕組みを共有すると互いの邪魔になる。
+
+        必須の拡張スタイルは OverlayWindowStyles がコード側で設定する
+        （クリックスルー・非アクティブ化・Alt+Tab 非表示）。
+    -->
+
+    <Border x:Name="Backdrop" CornerRadius="3" Padding="6,3"
+            Background="#CC000000">
+        <TextBlock x:Name="UsageText" Foreground="#F0F0F0" FontSize="12"
+                   TextWrapping="NoWrap" Text="—" />
+    </Border>
+</Window>

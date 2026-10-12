@@ -79,6 +79,18 @@ public sealed record LineTranslationResult(
     public IReadOnlyList<OcrLine> LinesToOverlay =>
         [.. Lines.Where((_, i) => Statuses[i] == LineTranslationStatus.Translated)];
 
+    /// <summary>
+    /// バックエンドを実際に呼んだ回数（0〜2）。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>使用量を数えるための値</b>（RULES.md 🟡-8）。
+    /// 全部キャッシュに当たれば 0、切り替えが起きれば 2 になる。</para>
+    /// <para><b>所要時間や行数から推し量らない。</b>「0 秒の成功」は
+    /// 「呼ばなかった」とも「速かった」とも読めてしまい、
+    /// 数え違いが課金の数字に直結する。<b>呼んだ側が数える。</b></para>
+    /// </remarks>
+    public int CallCount { get; init; }
+
     /// <summary>翻訳に回した行の数。</summary>
     public int SentCount => Statuses.Count(s => s != LineTranslationStatus.Skipped);
 
@@ -185,6 +197,9 @@ public static partial class LineTranslation
         TranslationResult? failed = null;
         TranslationResult result;
 
+        // RULES.md 🟡-8: 使用量を数えるため、呼んだ側で数える。
+        var calls = 0;
+
         if (ask.Count == 0)
         {
             // 全部覚えていた。呼び出さない（RULES.md 🟡-8）。押し直しがここに来る。
@@ -195,6 +210,7 @@ public static partial class LineTranslation
             var asked = ask.Select(n => sources[n]).ToList();
             var attempt = await SendAsync(translator, asked, targetLanguage, cancellationToken)
                 .ConfigureAwait(false);
+            calls++;
 
             // FR-TRN-06: 混雑・上限・通信不良なら静かに切り替える。
             // キー未登録と非対応は切り替えても同じ結果になるため含めない（ShouldFallBack）。
@@ -202,6 +218,7 @@ public static partial class LineTranslation
             {
                 var second = await SendAsync(fallback, asked, targetLanguage, cancellationToken)
                     .ConfigureAwait(false);
+                calls++;
 
                 if (second.Result.IsSuccess)
                 {
@@ -261,6 +278,7 @@ public static partial class LineTranslation
             Backend = translator.Name,
             FellBackFrom = failed,
             CachedCount = cached,
+            CallCount = calls,
             NumberChecks = checks,
         };
     }

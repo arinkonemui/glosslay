@@ -146,6 +146,21 @@
                 </StackPanel>
             </GroupBox>
 
+            <!-- RULES.md 🟡-8「使用量を常時表示」。クラウドとローカルを分けて数える。 -->
+            <GroupBox Header="使用量">
+                <StackPanel>
+                    <TextBlock x:Name="UsageText" TextWrapping="Wrap" FontSize="12" Text="—" />
+                    <CheckBox x:Name="UsageOverlayCheck" Margin="0,8,0,0"
+                              Content="ゲーム画面の隅にも出しっぱなしにする"
+                              Checked="OnUsageOverlayChanged" Unchecked="OnUsageOverlayChanged" />
+                    <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,4,0,0"
+                               Text="既定は OFF。訳文を出したときは、その隅にも小さく添えています。クリックは下のゲームへ通ります。位置は usageoverlay.json で変えられます。" />
+                    <Button Content="usage.json を開く" Click="OnOpenUsageClick" Margin="0,8,0,0" />
+                    <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,4,0,0"
+                               Text="日ごとの記録です。外部へ送信することはありません。" />
+                </StackPanel>
+            </GroupBox>
+
             <GroupBox Header="自動監視 (FR-MOD-02)">
                 <StackPanel>
                     <CheckBox x:Name="AutoWatchCheck" Content="画面の変化を見て自動で翻訳する"
