@@ -32,6 +32,9 @@ public partial class OverlayWindow : Window
 
     private readonly DispatcherTimer _watchdog;
 
+    /// <summary>重ね方の設定（FR-OVL-05）。<see cref="Options"/> から差し替える。</summary>
+    private OverlayOptions _options = new();
+
     /// <summary>いま表示している内容（訳文、または「翻訳中…」などのお知らせ）。</summary>
     private OverlayContent? _current;
 
@@ -66,6 +69,35 @@ public partial class OverlayWindow : Window
     /// 本来は設定値。PoC では既定値のみ持つ。
     /// </remarks>
     public TimeSpan AutoHideAfter { get; set; } = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// 重ね方の設定（FR-OVL-05 の文字サイズ）。
+    /// </summary>
+    /// <remarks>
+    /// 差し替えたら <see cref="Refresh"/> を呼ぶこと。出している最中でも見た目を変えられる。
+    /// </remarks>
+    public OverlayOptions Options
+    {
+        get => _options;
+        set
+        {
+            _options = value ?? throw new ArgumentNullException(nameof(value));
+            AutoHideAfter = value.AutoHideAfter;
+        }
+    }
+
+    /// <summary>いま出している訳文を、今の設定で描き直す。</summary>
+    /// <remarks>
+    /// <b>設定を変えた結果をその場で見せるため。</b>
+    /// 次の翻訳まで変化が分からないと、大きさを選び直せない。
+    /// </remarks>
+    public void Refresh()
+    {
+        if (IsVisible)
+        {
+            ApplyLayout();
+        }
+    }
 
     /// <summary>
     /// 訳文の隅に小さく添える使用量（RULES.md 🟡-8「使用量を常時表示」）。空なら出さない。
@@ -347,10 +379,15 @@ public partial class OverlayWindow : Window
     /// 訳文と原文が混ざって読めなくなる（2026-09-27、実画面で確認）。
     /// 結合前は 1 行ごとに札が乗っていたため起きなかった問題。</para>
     /// </remarks>
-    private static Border CreateLabel(OcrLine line, double scaleX, double scaleY)
+    private Border CreateLabel(OcrLine line, double scaleX, double scaleY)
     {
         // 小さすぎると読めないので下限を設ける。
-        var fontSize = Math.Max(11, line.Box.Height / (double)line.SourceLineCount * scaleY * 0.62);
+        // 倍率（FR-OVL-05 の小・中・大）は下限にもかける。
+        // 下限を固定にすると、「小」を選んでも小さい文字だけが変わらない。
+        var scale = _options.TextScale;
+        var fontSize = Math.Max(
+            11 * scale,
+            line.Box.Height / (double)line.SourceLineCount * scaleY * 0.62 * scale);
         var isJoined = line.SourceLineCount > 1;
 
         var label = new Border

@@ -5,13 +5,24 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Glosslay"
         mc:Ignorable="d"
-        Title="Glosslay — キャプチャ検証 (v0.1 PoC)"
-        Height="820" Width="1180" MinHeight="600" MinWidth="900">
+        Title="Glosslay"
+        Height="700" Width="1100" MinHeight="520" MinWidth="860"
+        WindowStartupLocation="CenterScreen">
 
     <!--
-        v0.1 PoC の実験台。UI の作り込みは PoC の対象外（PLAN.md）。
-        目的は P0-2 の「排他フルスクリーンのゲームで取得できるか実測する」と、
-        P0-7 の精度計測用サンプル採取。
+        既定の大きさは 1080p の画面に収まる値にしてある。
+        820 DIP は 125% の拡大率で 1025 物理ピクセルになり、
+        タスクバーを引いた高さ（約 1030）にほぼ接する。2026-10-13 に実測して下げた。
+
+        左は「メイン」と「設定」の 2 タブ、右は常にプレビュー。
+
+        分けたのは、ふだん見るものと最初に 1 回だけ触るものが混ざっていたため
+        （2026-10-13 の人間の判断）。ゲーム中はこの画面を出さず、
+        ホットキーとオーバーレイだけを使う。設定は深くてよいが、
+        毎回その中から対象やプロファイルを探すのは筋が悪い。
+
+        プレビューはタブの外に置く。範囲の指定（FR-CAP-05）はプレビュー上の
+        ドラッグで行うため、設定を触りながらでも見えている必要がある。
     -->
 
     <Window.Resources>
@@ -23,11 +34,21 @@
             <Setter Property="Padding" Value="8" />
             <Setter Property="Margin" Value="0,0,0,10" />
         </Style>
+        <Style x:Key="Hint" TargetType="TextBlock">
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Foreground" Value="#666" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Margin" Value="0,4,0,0" />
+        </Style>
+        <Style x:Key="FieldLabel" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Margin" Value="0,8,0,2" />
+        </Style>
     </Window.Resources>
 
     <Grid Margin="12">
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="340" />
+            <ColumnDefinition Width="360" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
         <Grid.RowDefinitions>
@@ -35,213 +56,330 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- ===== 左: 対象選択 =====
-             項目が増えても全部に手が届くよう、必ずスクロールできる形にしておく。
-             DockPanel で Top 固定を積むと、残り領域を使う要素の高さが 0 になって消える。 -->
-        <ScrollViewer Grid.Row="0" Grid.Column="0" Margin="0,0,12,0"
-                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-        <StackPanel>
+        <TabControl Grid.Row="0" Grid.Column="0" Margin="0,0,12,0">
 
-            <GroupBox Header="キャプチャ方式 (FR-CAP-02)">
-                <StackPanel>
-                    <RadioButton x:Name="WindowModeRadio" Content="ウィンドウ指定" IsChecked="True"
-                                 Margin="0,2" Checked="OnModeChanged" />
-                    <RadioButton x:Name="MonitorModeRadio" Content="モニタ全体" Margin="0,2"
-                                 Checked="OnModeChanged" />
-                    <TextBlock TextWrapping="Wrap" Foreground="#666" Margin="0,6,0,0" FontSize="11"
-                               Text="片方が塞がれた場合の保険として両方を用意する。排他フルスクリーンで挙動が変わる。" />
-                </StackPanel>
-            </GroupBox>
+            <!-- ===== メイン: ふだん見るもの ===== -->
+            <TabItem Header="メイン">
+                <ScrollViewer VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="8">
 
-            <GroupBox Header="オプション">
-                <StackPanel>
-                    <CheckBox x:Name="RemoveBorderCheck" IsChecked="True" Margin="0,2"
-                              Content="キャプチャ枠を消す (FR-CAP-07)" Checked="OnOptionChanged"
-                              Unchecked="OnOptionChanged" />
-                    <CheckBox x:Name="CaptureCursorCheck" IsChecked="False" Margin="0,2"
-                              Content="カーソルを含める" Checked="OnOptionChanged"
-                              Unchecked="OnOptionChanged" />
-                </StackPanel>
-            </GroupBox>
+                        <GroupBox Header="対象">
+                            <StackPanel>
+                                <!-- 高さを固定する。スクロール内で * を使うと高さが決まらない。 -->
+                                <ListBox x:Name="TargetList" Height="150" DisplayMemberPath="DisplayName"
+                                         SelectionChanged="OnTargetSelectionChanged" />
+                                <Button Content="一覧を更新" Click="OnRefreshClick" Margin="0,6,0,0" />
+                            </StackPanel>
+                        </GroupBox>
 
-            <!-- P0-3。ジャンルごとに最適値が違うため、実ゲームで試せるようにしておく -->
-            <GroupBox Header="前処理 (FR-OCR-04/05)">
-                <StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,2">
-                        <TextBlock Text="拡大" VerticalAlignment="Center" Width="70" />
-                        <ComboBox x:Name="ScaleCombo" Width="70" SelectedIndex="0">
-                            <ComboBoxItem Content="1.0 倍" Tag="1.0" />
-                            <ComboBoxItem Content="1.5 倍" Tag="1.5" />
-                            <ComboBoxItem Content="2.0 倍" Tag="2.0" />
-                            <ComboBoxItem Content="3.0 倍" Tag="3.0" />
-                            <ComboBoxItem Content="4.0 倍" Tag="4.0" />
-                        </ComboBox>
+                        <GroupBox Header="プロファイル">
+                            <StackPanel>
+                                <ComboBox x:Name="ProfileCombo" DisplayMemberPath="Name" />
+                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                    <Button Content="適用" Click="OnApplyProfileClick" FontWeight="SemiBold" />
+                                    <Button Content="現在の設定を保存" Click="OnSaveProfileClick" />
+                                </StackPanel>
+
+                                <CheckBox x:Name="ProfileAutoApplyCheck" Margin="0,8,0,0"
+                                          Content="前面のゲームに合わせて自動で切り替える"
+                                          Checked="OnProfileAutoApplyChanged"
+                                          Unchecked="OnProfileAutoApplyChanged" />
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="当てはまるプロファイルが無いときは、今の設定をそのまま使います（勝手に解除しません）。" />
+
+                                <Expander Header="名前と対象の指定" Margin="0,8,0,0">
+                                    <StackPanel Margin="0,6,0,0">
+                                        <TextBlock Style="{StaticResource FieldLabel}"
+                                                   Text="名前（空なら対象のタイトル）" Margin="0,0,0,2" />
+                                        <TextBox x:Name="ProfileNameBox" Padding="4,3" />
+
+                                        <TextBlock Style="{StaticResource FieldLabel}"
+                                                   Text="タイトルに含まれる文字列（任意）" />
+                                        <TextBox x:Name="ProfileTitleBox" Padding="4,3" />
+                                        <TextBlock x:Name="ProfileTargetText" Style="{StaticResource Hint}"
+                                                   Text="対象: —" />
+                                        <TextBlock Style="{StaticResource Hint}"
+                                                   Text="自動適用はウィンドウのクラス名で見分けます。Unity 製のゲームはどれも同じクラス名のため、クラス名だけでは別のゲームにも当たります。その場合はタイトルの変わらない部分を入れてください（「ゲーム名 - ステージ3」なら「ゲーム名」だけ）。" />
+
+                                        <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                            <Button Content="削除" Click="OnDeleteProfileClick" />
+                                            <Button Content="読み直す" Click="OnReloadProfilesClick" />
+                                            <Button Content="JSON を開く" Click="OnOpenProfilesClick" />
+                                        </StackPanel>
+                                        <TextBlock Style="{StaticResource Hint}"
+                                                   Text="人が読める JSON です。1 件分をコピーして渡せば、他の人もそのゲームの設定をそのまま使えます。" />
+                                    </StackPanel>
+                                </Expander>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="いまの状態">
+                            <StackPanel>
+                                <TextBlock x:Name="TranslatorStateText" Style="{StaticResource Hint}"
+                                           Margin="0,0,0,0" Text="確認中…" />
+                                <TextBlock x:Name="OcrEngineStateText" Style="{StaticResource Hint}"
+                                           Text="確認中…" />
+
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="ホットキー" />
+                                <TextBlock x:Name="HotkeyText" TextWrapping="Wrap" FontWeight="SemiBold"
+                                           Text="準備中…" />
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="ゲーム中に押すと、その瞬間の画面を撮って翻訳します。「翻訳中…」が出たら撮影済みなので、カーソルを動かして構いません。訳文は押した瞬間の画面のものなので、画面が変わったら ON/OFF キーで消してください。キーはゲームにもそのまま届きます。" />
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="使用量">
+                            <StackPanel>
+                                <TextBlock x:Name="UsageText" TextWrapping="Wrap" FontSize="12" Text="—" />
+                                <CheckBox x:Name="UsageOverlayCheck" Margin="0,8,0,0"
+                                          Content="ゲーム画面の隅にも出しっぱなしにする"
+                                          Checked="OnUsageOverlayChanged" Unchecked="OnUsageOverlayChanged" />
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="既定は OFF。訳文を出したときは、その隅にも小さく添えています。クリックは下のゲームへ通ります。" />
+                                <Button Content="記録（usage.json）を開く" Click="OnOpenUsageClick" Margin="0,8,0,0" />
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="日ごとの記録です。外部へ送信することはありません。" />
+                            </StackPanel>
+                        </GroupBox>
+
                     </StackPanel>
-                    <StackPanel Orientation="Horizontal" Margin="0,2">
-                        <TextBlock Text="コントラスト" VerticalAlignment="Center" Width="70" />
-                        <ComboBox x:Name="ContrastCombo" Width="70" SelectedIndex="0">
-                            <ComboBoxItem Content="1.0" Tag="1.0" />
-                            <ComboBoxItem Content="1.3" Tag="1.3" />
-                            <ComboBoxItem Content="1.6" Tag="1.6" />
-                            <ComboBoxItem Content="2.0" Tag="2.0" />
-                        </ComboBox>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ===== 設定: 最初に 1 回だけ触るもの ===== -->
+            <TabItem Header="設定">
+                <ScrollViewer VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="8">
+
+                        <GroupBox Header="翻訳">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="訳文の言語"
+                                           Margin="0,0,0,2" />
+                                <ComboBox x:Name="TargetLanguageCombo" DisplayMemberPath="DisplayName"
+                                          SelectionChanged="OnTargetLanguageChanged" />
+                                <TextBlock x:Name="TargetLanguageNote" Style="{StaticResource Hint}" Text="" />
+
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="使うバックエンド" />
+                                <RadioButton x:Name="BackendAutoRadio" GroupName="Backend"
+                                             Checked="OnBackendChanged"
+                                             Content="自動（クラウド優先・失敗したらローカルへ切替）" />
+                                <RadioButton x:Name="BackendCloudRadio" GroupName="Backend"
+                                             Checked="OnBackendChanged" Margin="0,2,0,0"
+                                             Content="クラウドのみ（失敗しても切り替えない）" />
+                                <RadioButton x:Name="BackendLocalRadio" GroupName="Backend"
+                                             Checked="OnBackendChanged" Margin="0,2,0,0"
+                                             Content="ローカルのみ（キーがあっても使わない）" />
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="「クラウドのみ」は、質の落ちた訳が黙って出るより「今は訳せない」と分かる方がよい場合に選びます。" />
+
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="APIキー" />
+                                <!-- PasswordBox にしているのは、画面に出さないため。
+                                     スクリーンショットを撮って人に送ってもキーが写らない。 -->
+                                <PasswordBox x:Name="ApiKeyBox" Padding="4,3" FontFamily="Consolas" />
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="DPAPI で暗号化して %APPDATA%\Glosslay\secrets\ に保存します。設定JSONには書きません。" />
+                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                    <Button x:Name="SaveApiKeyButton" Content="キーを保存"
+                                            Click="OnSaveApiKeyClick" />
+                                    <Button x:Name="DeleteApiKeyButton" Content="削除"
+                                            Click="OnDeleteApiKeyClick" />
+                                    <Button Content="モデル設定を開く" Click="OnOpenGeminiSettingsClick" />
+                                </StackPanel>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="読み取り">
+                            <StackPanel>
+                                <RadioButton x:Name="OcrPaddleRadio" GroupName="OcrEngine"
+                                             Content="既定（PaddleOCR）— おすすめ"
+                                             Checked="OnOcrEngineChanged" />
+                                <RadioButton x:Name="OcrWindowsRadio" GroupName="OcrEngine" Margin="0,2,0,0"
+                                             Content="高速モード（Windows OCR）— 上級者向け・要 言語パック"
+                                             Checked="OnOcrEngineChanged" />
+                                <TextBlock x:Name="OcrEngineNote" Style="{StaticResource Hint}" Text="" />
+
+                                <StackPanel x:Name="OcrLanguagePanel" Visibility="Collapsed">
+                                    <TextBlock Style="{StaticResource FieldLabel}" Text="原文の言語" />
+                                    <ComboBox x:Name="OcrLanguageCombo"
+                                              SelectionChanged="OnOcrLanguageChanged" />
+                                </StackPanel>
+
+                                <TextBlock x:Name="OcrLanguageNote" Style="{StaticResource Hint}" Text="" />
+                                <Button Content="言語を追加する設定を開く" Click="OnOpenLanguageSettingsClick"
+                                        Margin="0,6,0,0" />
+
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="前処理" />
+                                <StackPanel Orientation="Horizontal" Margin="0,2">
+                                    <TextBlock Text="拡大" VerticalAlignment="Center" Width="70" />
+                                    <ComboBox x:Name="ScaleCombo" Width="70" SelectedIndex="0">
+                                        <ComboBoxItem Content="1.0 倍" Tag="1.0" />
+                                        <ComboBoxItem Content="1.5 倍" Tag="1.5" />
+                                        <ComboBoxItem Content="2.0 倍" Tag="2.0" />
+                                        <ComboBoxItem Content="3.0 倍" Tag="3.0" />
+                                        <ComboBoxItem Content="4.0 倍" Tag="4.0" />
+                                    </ComboBox>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,2">
+                                    <TextBlock Text="コントラスト" VerticalAlignment="Center" Width="70" />
+                                    <ComboBox x:Name="ContrastCombo" Width="70" SelectedIndex="0">
+                                        <ComboBoxItem Content="1.0" Tag="1.0" />
+                                        <ComboBoxItem Content="1.3" Tag="1.3" />
+                                        <ComboBoxItem Content="1.6" Tag="1.6" />
+                                        <ComboBoxItem Content="2.0" Tag="2.0" />
+                                    </ComboBox>
+                                </StackPanel>
+                                <CheckBox x:Name="AutoContrastCheck" Content="自動コントラスト" Margin="0,4,0,2" />
+                                <CheckBox x:Name="RemoveBackgroundCheck" Content="背景除去（イラスト背景対策）"
+                                          Margin="0,2" />
+                                <CheckBox x:Name="BinarizeCheck" Content="二値化" Margin="0,2" />
+                                <CheckBox x:Name="InvertCheck" Content="明暗を反転" Margin="0,2" />
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="プレビュー上をドラッグすると、その範囲だけを読み取ります。範囲を絞ると速くなります。" />
+                                <Button Content="範囲の指定を解除" Click="OnClearRegionClick" Margin="0,6,0,0" />
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="自動で翻訳する">
+                            <StackPanel>
+                                <CheckBox x:Name="AutoWatchCheck" Content="画面の変化を見て自動で翻訳する"
+                                          Checked="OnAutoWatchChanged" Unchecked="OnAutoWatchChanged" />
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="セリフ送りに追従するモードです。既定は OFF。プレビューをドラッグして範囲を絞ると、背景の動きによる誤検知が減ります。変化がなければ読み取りも翻訳もしません。1 時間あたりの呼び出し回数に上限があります。" />
+
+                                <CheckBox x:Name="CursorDwellCheck" Margin="0,10,0,0"
+                                          Content="カーソルを止めたら自動で翻訳する"
+                                          Checked="OnCursorDwellChanged" Unchecked="OnCursorDwellChanged" />
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="カードに合わせて説明を読む操作に向きます。止まってから少し待つと 1 回だけ発動し、動かし続けている間は何もしません。OFF にしてもホットキーでの翻訳は使えます。呼び出し上限は上と共有します。" />
+
+                                <Expander Header="細かい調整" Margin="0,10,0,0">
+                                    <StackPanel Margin="0,6,0,0">
+                                        <StackPanel Orientation="Horizontal" Margin="0,2">
+                                            <TextBlock Text="見回る間隔" VerticalAlignment="Center" Width="110" />
+                                            <ComboBox x:Name="WatchIntervalCombo" Width="90"
+                                                      SelectionChanged="OnWatchTuningChanged">
+                                                <ComboBoxItem Content="0.3 秒" Tag="300" />
+                                                <ComboBoxItem Content="0.5 秒" Tag="500" />
+                                                <ComboBoxItem Content="1.0 秒" Tag="1000" />
+                                                <ComboBoxItem Content="2.0 秒" Tag="2000" />
+                                            </ComboBox>
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Margin="0,2">
+                                            <TextBlock Text="変化の感度" VerticalAlignment="Center" Width="110" />
+                                            <ComboBox x:Name="WatchThresholdCombo" Width="90"
+                                                      SelectionChanged="OnWatchTuningChanged">
+                                                <ComboBoxItem Content="敏感" Tag="0.01" />
+                                                <ComboBoxItem Content="ふつう" Tag="0.02" />
+                                                <ComboBoxItem Content="鈍感" Tag="0.05" />
+                                            </ComboBox>
+                                        </StackPanel>
+                                        <TextBlock Style="{StaticResource Hint}"
+                                                   Text="間隔を短くすると追従は良くなりますが、CPU をゲームと奪い合います。鈍感にすると背景の動きで誤って翻訳することが減ります。" />
+
+                                        <StackPanel Orientation="Horizontal" Margin="0,8,0,2">
+                                            <TextBlock Text="静止と見なす時間" VerticalAlignment="Center" Width="110" />
+                                            <ComboBox x:Name="DwellTimeCombo" Width="90"
+                                                      SelectionChanged="OnCursorTuningChanged">
+                                                <ComboBoxItem Content="0.2 秒" Tag="200" />
+                                                <ComboBoxItem Content="0.4 秒" Tag="400" />
+                                                <ComboBoxItem Content="0.7 秒" Tag="700" />
+                                                <ComboBoxItem Content="1.0 秒" Tag="1000" />
+                                            </ComboBox>
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal" Margin="0,2">
+                                            <TextBlock Text="読み取る範囲" VerticalAlignment="Center" Width="110" />
+                                            <ComboBox x:Name="CursorRegionCombo" Width="130"
+                                                      SelectionChanged="OnCursorTuningChanged">
+                                                <ComboBoxItem Content="狭い (480x360)" Tag="480x360" />
+                                                <ComboBoxItem Content="ふつう (640x480)" Tag="640x480" />
+                                                <ComboBoxItem Content="広い (900x600)" Tag="900x600" />
+                                            </ComboBox>
+                                        </StackPanel>
+                                        <TextBlock Style="{StaticResource Hint}"
+                                                   Text="範囲を広げるほど読み取りに時間がかかります。カーソルの周りの説明文が収まる大きさが目安です。" />
+                                    </StackPanel>
+                                </Expander>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="訳文の見た目">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,2">
+                                    <TextBlock Text="文字の大きさ" VerticalAlignment="Center" Width="110" />
+                                    <ComboBox x:Name="TextSizeCombo" Width="90"
+                                              SelectionChanged="OnOverlayLookChanged">
+                                        <ComboBoxItem Content="小" Tag="Small" />
+                                        <ComboBoxItem Content="中" Tag="Medium" />
+                                        <ComboBoxItem Content="大" Tag="Large" />
+                                    </ComboBox>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,2">
+                                    <TextBlock Text="消えるまで" VerticalAlignment="Center" Width="110" />
+                                    <ComboBox x:Name="AutoHideCombo" Width="90"
+                                              SelectionChanged="OnOverlayLookChanged">
+                                        <ComboBoxItem Content="5 秒" Tag="5" />
+                                        <ComboBoxItem Content="10 秒" Tag="10" />
+                                        <ComboBoxItem Content="20 秒" Tag="20" />
+                                        <ComboBoxItem Content="30 秒" Tag="30" />
+                                    </ComboBox>
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="訳文は押した瞬間の画面のものです。画面が変わると合わなくなるため、出しっぱなしにはしません。" />
+
+                                <StackPanel Orientation="Horizontal" Margin="0,8,0,2">
+                                    <TextBlock Text="使用量を出す隅" VerticalAlignment="Center" Width="110" />
+                                    <ComboBox x:Name="UsageCornerCombo" Width="90"
+                                              SelectionChanged="OnUsageCornerChanged">
+                                        <ComboBoxItem Content="左上" Tag="TopLeft" />
+                                        <ComboBoxItem Content="右上" Tag="TopRight" />
+                                        <ComboBoxItem Content="左下" Tag="BottomLeft" />
+                                        <ComboBoxItem Content="右下" Tag="BottomRight" />
+                                    </ComboBox>
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="「メイン」で常駐表示を入れている場合の位置です。" />
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="キャプチャ">
+                            <StackPanel>
+                                <RadioButton x:Name="WindowModeRadio" Content="ウィンドウ指定" IsChecked="True"
+                                             Margin="0,2" Checked="OnModeChanged" />
+                                <RadioButton x:Name="MonitorModeRadio" Content="モニタ全体" Margin="0,2"
+                                             Checked="OnModeChanged" />
+                                <CheckBox x:Name="RemoveBorderCheck" IsChecked="True" Margin="0,6,0,2"
+                                          Content="キャプチャ枠を消す" Checked="OnOptionChanged"
+                                          Unchecked="OnOptionChanged" />
+                                <CheckBox x:Name="CaptureCursorCheck" IsChecked="False" Margin="0,2"
+                                          Content="カーソルを含める" Checked="OnOptionChanged"
+                                          Unchecked="OnOptionChanged" />
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="片方が塞がれた場合の保険として両方を用意しています。" />
+                            </StackPanel>
+                        </GroupBox>
+
+                        <!-- 課題1・課題6。書く場所を 1 か所にまとめる（2026-09-21 の要望）。
+                             ここに置いたのは、設定を触っている人が必ず通る場所だから。
+                             配布ページと操作マニュアル（FR-SYS-11）にも同じ内容を載せる。 -->
+                        <GroupBox Header="できないこと">
+                            <StackPanel>
+                                <TextBlock TextWrapping="Wrap" FontSize="11"
+                                           Text="・排他フルスクリーンのゲームには重ねられません。ゲーム側の表示設定を「ボーダーレス」または「ウィンドウ」にしてください。" />
+                                <TextBlock TextWrapping="Wrap" FontSize="11" Margin="0,4,0,0"
+                                           Text="・映像から文字を読み取るため、記号やアイコンに似た文字があると誤読することがあります。" />
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="数値が合わない行には、訳文の下に原文も表示します。" />
+                            </StackPanel>
+                        </GroupBox>
+
                     </StackPanel>
-                    <CheckBox x:Name="AutoContrastCheck" Content="自動コントラスト" Margin="0,4,0,2" />
-                    <CheckBox x:Name="RemoveBackgroundCheck" Content="背景除去（イラスト背景対策）" Margin="0,2" />
-                    <CheckBox x:Name="BinarizeCheck" Content="二値化" Margin="0,2" />
-                    <CheckBox x:Name="InvertCheck" Content="明暗を反転" Margin="0,2" />
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
 
-                    <!-- FR-OCR-03。既定は PaddleOCR。高速モードは代償を数字で示してから選ばせる。 -->
-                    <TextBlock Text="読み取りエンジン (FR-OCR-03)" Margin="0,10,0,2" FontSize="11" />
-                    <TextBlock x:Name="OcrEngineStateText" TextWrapping="Wrap" FontSize="11"
-                               Foreground="#666" Text="確認中…" />
-                    <RadioButton x:Name="OcrPaddleRadio" GroupName="OcrEngine" Margin="0,4,0,0"
-                                 Content="既定（PaddleOCR）— おすすめ" Checked="OnOcrEngineChanged" />
-                    <RadioButton x:Name="OcrWindowsRadio" GroupName="OcrEngine" Margin="0,2,0,0"
-                                 Content="高速モード（Windows OCR）— 上級者向け・要 言語パック"
-                                 Checked="OnOcrEngineChanged" />
-                    <TextBlock x:Name="OcrEngineNote" TextWrapping="Wrap" Foreground="#666"
-                               FontSize="11" Margin="0,4,0,0" Text="" />
-                    <TextBlock x:Name="OcrLanguageNote" TextWrapping="Wrap" Foreground="#666"
-                               FontSize="11" Margin="0,4,0,0" Text="" />
-                    <Button Content="言語を追加する設定を開く" Click="OnOpenLanguageSettingsClick"
-                            Margin="0,6,0,0" />
-                    <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,6,0,0"
-                               Text="プレビュー上をドラッグすると、その範囲だけを OCR する。範囲を絞ると速くなる。" />
-                    <Button Content="範囲の指定を解除" Click="OnClearRegionClick" Margin="0,6,0,0" />
-                </StackPanel>
-            </GroupBox>
-
-            <!-- P0-5。既定のバックエンドはローカルNMT（RULES.md 🟡-1）だが実装は v1.0。
-                 PoC では Gemini のみを通す。 -->
-            <GroupBox Header="翻訳 (P0-5 / Gemini)">
-                <StackPanel>
-                    <TextBlock x:Name="TranslatorStateText" TextWrapping="Wrap" FontSize="11"
-                               Foreground="#666" Text="確認中…" />
-
-                    <!-- FR-CFG-01 の「言語」。日本語以外はクラウド翻訳のキーが要る。 -->
-                    <TextBlock Text="訳文の言語" Margin="0,8,0,2" FontSize="11" />
-                    <ComboBox x:Name="TargetLanguageCombo" DisplayMemberPath="DisplayName"
-                              SelectionChanged="OnTargetLanguageChanged" />
-                    <TextBlock x:Name="TargetLanguageNote" TextWrapping="Wrap" Foreground="#666"
-                               FontSize="11" Margin="0,4,0,0" Text="" />
-
-                    <!-- FR-TRN-01 / FR-TRN-06。自動で切り替わってほしくない人のための選択。
-                         既定は「自動」で、キーが無くても動き、混雑しても止まらない。 -->
-                    <TextBlock Text="使うバックエンド" Margin="0,8,0,2" FontSize="11" />
-                    <RadioButton x:Name="BackendAutoRadio" GroupName="Backend" Checked="OnBackendChanged"
-                                 Content="自動（クラウド優先・失敗したらローカルへ切替）" />
-                    <RadioButton x:Name="BackendCloudRadio" GroupName="Backend" Checked="OnBackendChanged"
-                                 Content="クラウドのみ（失敗しても切り替えない）" Margin="0,2,0,0" />
-                    <RadioButton x:Name="BackendLocalRadio" GroupName="Backend" Checked="OnBackendChanged"
-                                 Content="ローカルのみ（キーがあっても使わない）" Margin="0,2,0,0" />
-                    <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,4,0,0"
-                               Text="「クラウドのみ」は、質の落ちた訳が黙って出るより「今は訳せない」と分かる方がよい場合に選びます。translation.json に保存します。" />
-
-                    <!-- FR-MOD-01 手動モード。ゲーム中に押す想定のため、ここに操作を明示しておく。 -->
-                    <TextBlock Text="ホットキー" Margin="0,8,0,2" FontSize="11" />
-                    <TextBlock x:Name="HotkeyText" TextWrapping="Wrap" FontWeight="SemiBold"
-                               Text="準備中…" />
-                    <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,4,0,0"
-                               Text="ゲーム中に押すと、その瞬間の画面を撮って翻訳します。「翻訳中…」が出たら撮影済みなので、カーソルを動かして構いません。訳文は押した瞬間の画面のものなので、画面が変わったら ON/OFF キーで消してください (FR-OVL-08)。キーはゲームにもそのまま届きます (FR-INP-02)。変更は hotkeys.json で。" />
-
-                    <TextBlock Text="APIキー" Margin="0,8,0,2" FontSize="11" />
-                    <!-- PasswordBox にしているのは、画面に出さないため。
-                         スクリーンショットを撮って人に送ってもキーが写らない。 -->
-                    <PasswordBox x:Name="ApiKeyBox" Padding="4,3" FontFamily="Consolas" />
-                    <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,4,0,0"
-                               Text="DPAPI で暗号化して %APPDATA%\Glosslay\secrets\ に保存します (FR-TRN-05)。設定JSONには書きません。" />
-                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                        <Button x:Name="SaveApiKeyButton" Content="キーを保存" Click="OnSaveApiKeyClick" />
-                        <Button x:Name="DeleteApiKeyButton" Content="削除" Click="OnDeleteApiKeyClick" />
-                    </StackPanel>
-
-                    <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,10,0,0"
-                               Text="モデル名はハードコードせず設定値で持ちます (FR-TRN-07)。下のボタンで JSON を開いて変更できます。" />
-                    <Button Content="gemini.json を開く" Click="OnOpenGeminiSettingsClick" Margin="0,6,0,0" />
-                </StackPanel>
-            </GroupBox>
-
-            <!-- RULES.md 🟡-8「使用量を常時表示」。クラウドとローカルを分けて数える。 -->
-            <GroupBox Header="使用量">
-                <StackPanel>
-                    <TextBlock x:Name="UsageText" TextWrapping="Wrap" FontSize="12" Text="—" />
-                    <CheckBox x:Name="UsageOverlayCheck" Margin="0,8,0,0"
-                              Content="ゲーム画面の隅にも出しっぱなしにする"
-                              Checked="OnUsageOverlayChanged" Unchecked="OnUsageOverlayChanged" />
-                    <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,4,0,0"
-                               Text="既定は OFF。訳文を出したときは、その隅にも小さく添えています。クリックは下のゲームへ通ります。位置は usageoverlay.json で変えられます。" />
-                    <Button Content="usage.json を開く" Click="OnOpenUsageClick" Margin="0,8,0,0" />
-                    <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,4,0,0"
-                               Text="日ごとの記録です。外部へ送信することはありません。" />
-                </StackPanel>
-            </GroupBox>
-
-            <GroupBox Header="自動監視 (FR-MOD-02)">
-                <StackPanel>
-                    <CheckBox x:Name="AutoWatchCheck" Content="画面の変化を見て自動で翻訳する"
-                              Checked="OnAutoWatchChanged" Unchecked="OnAutoWatchChanged" />
-                    <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,4,0,0"
-                               Text="セリフ送りに追従するモードです。既定は OFF。プレビューをドラッグして範囲を絞ると、背景の動きによる誤検知が減ります。変化がなければ OCR も翻訳もしません。1 時間あたりの呼び出し回数に上限があります (FR-MOD-04)。設定は autowatch.json で。" />
-                </StackPanel>
-            </GroupBox>
-
-            <GroupBox Header="カーソル位置モード (FR-MOD-09〜14)">
-                <StackPanel>
-                    <CheckBox x:Name="CursorDwellCheck" Content="カーソルを止めたら自動で翻訳する"
-                              Checked="OnCursorDwellChanged" Unchecked="OnCursorDwellChanged" />
-                    <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,4,0,0"
-                               Text="カードに合わせて説明を読む操作に向きます。止まってから 400ms で 1 回だけ発動し、動かし続けている間は何もしません。OFF にしてもホットキーでの翻訳は使えます (FR-MOD-14)。呼び出し上限は自動監視と共有します。設定は cursormode.json で。" />
-                </StackPanel>
-            </GroupBox>
-
-            <GroupBox Header="対象">
-                <!-- 高さを固定する。スクロール内で * を使うと高さが決まらない。 -->
-                <ListBox x:Name="TargetList" Height="170" DisplayMemberPath="DisplayName"
-                         SelectionChanged="OnTargetSelectionChanged" />
-            </GroupBox>
-
-            <Button Content="対象一覧を更新" Click="OnRefreshClick" Margin="0,0,0,10" />
-
-            <!-- ここまでで作った設定（範囲・前処理・各モード）に名前を付けて残す。
-                 上の項目をまとめて保存するものなので、左側の最後に置いてある。 -->
-            <GroupBox Header="プロファイル (FR-CFG-01〜03)">
-                <StackPanel>
-                    <ComboBox x:Name="ProfileCombo" DisplayMemberPath="Name" />
-                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                        <Button Content="適用" Click="OnApplyProfileClick" FontWeight="SemiBold" />
-                        <Button Content="削除" Click="OnDeleteProfileClick" />
-                        <Button Content="読み直す" Click="OnReloadProfilesClick" />
-                    </StackPanel>
-
-                    <TextBlock Text="名前（空なら対象のタイトル）" Margin="0,10,0,2" FontSize="11" />
-                    <TextBox x:Name="ProfileNameBox" Padding="4,3" />
-
-                    <TextBlock Text="タイトルに含まれる文字列（任意）" Margin="0,6,0,2" FontSize="11" />
-                    <TextBox x:Name="ProfileTitleBox" Padding="4,3" />
-                    <TextBlock x:Name="ProfileTargetText" TextWrapping="Wrap" Foreground="#666"
-                               FontSize="11" Margin="0,4,0,0" Text="対象: —" />
-                    <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,4,0,0"
-                               Text="自動適用はウィンドウのクラス名で見分けます。Unity 製のゲームはどれも同じクラス名のため、クラス名だけでは別のゲームにも当たります。その場合はタイトルの変わらない部分を入れてください（「ゲーム名 - ステージ3」なら「ゲーム名」だけ）。" />
-
-                    <Button Content="現在の設定を保存" Click="OnSaveProfileClick" Margin="0,8,0,0"
-                            FontWeight="SemiBold" />
-
-                    <CheckBox x:Name="ProfileAutoApplyCheck" Margin="0,10,0,0"
-                              Content="前面のゲームに合わせて自動で切り替える"
-                              Checked="OnProfileAutoApplyChanged" Unchecked="OnProfileAutoApplyChanged" />
-                    <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,4,0,0"
-                               Text="当てはまるプロファイルが無いときは、今の設定をそのまま使います（勝手に解除しません）。保存したプロファイルが自動監視 ON を含む場合は、切り替わった時点で翻訳の呼び出しが始まります。設定は autoprofile.json で。" />
-
-                    <Button Content="profiles.json を開く" Click="OnOpenProfilesClick" Margin="0,8,0,0" />
-                    <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,4,0,0"
-                               Text="人が読める JSON です。1 件分をコピーして渡せば、他の人もそのゲームの設定をそのまま使えます (FR-CFG-03)。" />
-                </StackPanel>
-            </GroupBox>
-        </StackPanel>
-        </ScrollViewer>
-
-        <!-- ===== 右: プレビュー ===== -->
+        <!-- ===== 右: プレビュー（タブの外。範囲指定に要る） ===== -->
         <GroupBox Grid.Row="0" Grid.Column="1" Header="プレビュー">
             <Grid>
                 <Border Background="#1E1E1E">
@@ -249,7 +387,7 @@
                         <Image x:Name="PreviewImage" Stretch="Uniform"
                                RenderOptions.BitmapScalingMode="HighQuality" />
 
-                        <!-- ドラッグで OCR 対象の矩形を指定する（FR-CAP-05） -->
+                        <!-- ドラッグで読み取り対象の矩形を指定する（FR-CAP-05） -->
                         <Canvas x:Name="SelectionCanvas" Background="Transparent" Cursor="Cross"
                                 MouseLeftButtonDown="OnSelectionStart"
                                 MouseMove="OnSelectionMove"
@@ -261,7 +399,7 @@
                 </Border>
                 <TextBlock x:Name="PreviewPlaceholder" Foreground="#888" FontSize="13"
                            HorizontalAlignment="Center" VerticalAlignment="Center"
-                           Text="対象を選んで「今すぐキャプチャ」を押してください" />
+                           Text="対象を選んで「画面を翻訳」を押してください" />
             </Grid>
         </GroupBox>
 
@@ -269,28 +407,36 @@
         <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,12,0,0">
 
             <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                <Button x:Name="CaptureNowButton" Content="今すぐキャプチャ" Click="OnCaptureNowClick"
-                        FontWeight="SemiBold" />
-                <Button x:Name="CaptureDelayedButton" Content="5秒後にキャプチャ" Click="OnCaptureDelayedClick" />
-                <Button x:Name="OcrButton" Content="OCR を実行" Click="OnOcrClick" IsEnabled="False"
-                        FontWeight="SemiBold" />
-                <Button x:Name="TranslateButton" Content="翻訳を実行" Click="OnTranslateClick"
-                        IsEnabled="False" FontWeight="SemiBold" />
-                <Button x:Name="OverlayButton" Content="オーバーレイ表示" Click="OnOverlayClick"
-                        IsEnabled="False" FontWeight="SemiBold" />
-                <Button x:Name="OverlayHideButton" Content="オーバーレイ消去" Click="OnOverlayHideClick"
+                <Button x:Name="TranslateScreenButton" Content="画面を翻訳" Click="OnTranslateScreenClick"
+                        FontWeight="SemiBold" Padding="16,6" />
+                <Button x:Name="OverlayHideButton" Content="訳文を消す" Click="OnOverlayHideClick"
                         IsEnabled="False" />
-                <Button x:Name="SaveButton" Content="PNG で保存" Click="OnSaveClick" IsEnabled="False" />
-                <Button Content="保存フォルダを開く" Click="OnOpenFolderClick" />
                 <TextBlock VerticalAlignment="Center" Foreground="#666" FontSize="11" Margin="8,0,0,0"
                            TextWrapping="Wrap"
-                           Text="排他フルスクリーンの検証は「5秒後」を押してからゲームへ切り替える。" />
+                           Text="ゲーム中はホットキーで同じことができます。この画面は出していなくて構いません。" />
             </StackPanel>
+
+            <!-- 検証用。ふだんは畳んでおく。工程ごとに切り分けて見るためのもので、
+                 日常の操作ではない（上の「画面を翻訳」が一括で行う）。 -->
+            <Expander Header="工程ごとに実行する（動作確認用）" Margin="0,0,0,8">
+                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                    <Button x:Name="CaptureNowButton" Content="今すぐキャプチャ" Click="OnCaptureNowClick" />
+                    <Button x:Name="CaptureDelayedButton" Content="5秒後にキャプチャ"
+                            Click="OnCaptureDelayedClick" />
+                    <Button x:Name="OcrButton" Content="OCR を実行" Click="OnOcrClick" IsEnabled="False" />
+                    <Button x:Name="TranslateButton" Content="翻訳を実行" Click="OnTranslateClick"
+                            IsEnabled="False" />
+                    <Button x:Name="OverlayButton" Content="オーバーレイ表示" Click="OnOverlayClick"
+                            IsEnabled="False" />
+                    <Button x:Name="SaveButton" Content="PNG で保存" Click="OnSaveClick" IsEnabled="False" />
+                    <Button Content="保存フォルダを開く" Click="OnOpenFolderClick" />
+                </StackPanel>
+            </Expander>
 
             <!-- 結果は行数が読めないため必ず高さを固定してスクロールさせる。
                  Auto のままだと OCR の行数が多いときに他の要素を画面外へ押し出す。 -->
             <Border Background="#F5F5F5" BorderBrush="#DDD" BorderThickness="1" Padding="10"
-                    CornerRadius="3" Height="150">
+                    CornerRadius="3" Height="130">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
                     <TextBlock x:Name="ResultText" FontFamily="Consolas" FontSize="12"
                                TextWrapping="NoWrap" Text="—" />

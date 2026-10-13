@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -15,6 +16,7 @@ using Glosslay.Imaging;
 using Glosslay.Input;
 using Glosslay.Monitoring;
 using Glosslay.Ocr;
+using Glosslay.Overlay;
 using Glosslay.Profiles;
 using Glosslay.Translation;
 using Glosslay.Usage;
@@ -187,6 +189,12 @@ public partial class MainWindow : Window, IDisposable
 
     /// <summary>ラジオへ選択を反映している間、Checked の処理を止める。</summary>
     private bool _suppressOcrEngineChange;
+
+    /// <summary>一覧へ値を反映している間、SelectionChanged の処理を止める。</summary>
+    private bool _suppressTuningChange;
+
+    /// <summary>訳文の重ね方（FR-OVL-05 / 06）。</summary>
+    private OverlayOptions _overlayOptions = OverlayOptions.Load();
 
     private ScreenCapture? _capture;
     private CaptureTarget? _activeTarget;
@@ -1055,6 +1063,10 @@ private void StartHotkey()
         ProfileAutoApplyCheck.IsChecked = _profileOptions.AutoApply;
         SetProfileAutoApply(_profileOptions.AutoApply);
 
+        // 細かい設定（間隔・感度・静止時間・範囲・文字サイズ・隅）を一覧へ反映する。
+        RefreshTuning();
+        RefreshOcrLanguages();
+
         // RULES.md 🟡-8: 使用量は起動した時点から見えていること。
         RefreshUsage();
         UsageOverlayCheck.IsChecked = _usageOverlayOptions.Enabled;
@@ -1175,6 +1187,7 @@ private void StartHotkey()
         _ocrEngine.Dispose();
         _ocrEngine = CreateOcrEngine();
         RefreshOcrEngineState();
+        RefreshOcrLanguages();
 
         StatusText.Text = choice == OcrEngineChoice.Windows
             ? "高速モードに切り替えました。読み直すには OCR を実行してください。"
@@ -1275,6 +1288,17 @@ private void StartHotkey()
     }
 
     // ===== キャプチャ =====
+
+    /// <summary>
+    /// 撮影から訳文の重ね合わせまでを一括で行う（ホットキーと同じ経路）。
+    /// </summary>
+    /// <remarks>
+    /// <b>これが日常の操作。</b>下の「工程ごとに実行する」は切り分けて見るためのもので、
+    /// ふだんは使わない。<b>同じことをホットキーでもできる</b>ため、
+    /// この画面を出していない状態が本来の使い方。
+    /// </remarks>
+    private async void OnTranslateScreenClick(object sender, RoutedEventArgs e)
+        => await RunGuardedAsync(TranslateScreenAsync).ConfigureAwait(true);
 
     private async void OnCaptureNowClick(object sender, RoutedEventArgs e)
         => await RunGuardedAsync(() => CaptureAsync(TimeSpan.Zero)).ConfigureAwait(true);
@@ -1963,6 +1987,219 @@ private void StartHotkey()
         StatusText.Text = $"usage.json を開きました（直近 {UsageStore.KeepDays} 日ぶん。送信はしません）。";
     }
 
+    // ===== 細かい設定（FR-MOD-03 / 11 / 12・FR-OVL-05 / 06） =====
+
+    /// <summary>
+    /// 設定の値を一覧へ反映する。
+    /// </summary>
+    /// <remarks>
+    /// <b>一覧に無い値でも捨てない。</b>設定ファイルは手で編集できるため
+    /// （RULES.md 🔵）、選択肢に無い値が入っていることがある。
+    /// その場合は項目を足して選択状態にし、<b>書いた値がそのまま効いている</b>ことを見せる。
+    /// </remarks>
+    private static void SelectByTag(System.Windows.Controls.ComboBox combo, string tag, string display)
+    {
+        foreach (var item in combo.Items.OfType<System.Windows.Controls.ComboBoxItem>())
+        {
+            if (item.Tag is string existing
+                && string.Equals(existing, tag, StringComparison.OrdinalIgnoreCase))
+            {
+                combo.SelectedItem = item;
+                return;
+            }
+        }
+
+        var added = new System.Windows.Controls.ComboBoxItem { Content = display, Tag = tag };
+        combo.Items.Add(added);
+        combo.SelectedItem = added;
+    }
+
+    /// <summary>選ばれている項目の <c>Tag</c>。</summary>
+    private static string? TagOf(System.Windows.Controls.ComboBox combo) =>
+        combo.SelectedItem is System.Windows.Controls.ComboBoxItem { Tag: string tag } ? tag : null;
+
+    /// <summary>細かい設定の一覧を、保存されている値に合わせる。</summary>
+    private void RefreshTuning()
+    {
+        _suppressTuningChange = true;
+
+        var interval = _watchOptions.Interval.TotalMilliseconds.ToString("0", CultureInfo.InvariantCulture);
+        SelectByTag(WatchIntervalCombo, interval, $"{_watchOptions.Interval.TotalSeconds:0.#} 秒");
+
+        var threshold = _watchOptions.Threshold.ToString("0.###", CultureInfo.InvariantCulture);
+        SelectByTag(WatchThresholdCombo, threshold, threshold);
+
+        var dwell = _cursorOptions.DwellTime.TotalMilliseconds.ToString("0", CultureInfo.InvariantCulture);
+        SelectByTag(DwellTimeCombo, dwell, $"{_cursorOptions.DwellTime.TotalSeconds:0.#} 秒");
+
+        var region = $"{_cursorOptions.Width}x{_cursorOptions.Height}";
+        SelectByTag(CursorRegionCombo, region, region);
+
+        SelectByTag(TextSizeCombo, _overlayOptions.TextSize.ToString(), _overlayOptions.TextSize.ToString());
+
+        var hide = _overlayOptions.AutoHideAfter.TotalSeconds.ToString("0", CultureInfo.InvariantCulture);
+        SelectByTag(AutoHideCombo, hide, $"{hide} 秒");
+
+        SelectByTag(UsageCornerCombo, _usageOverlayOptions.Corner.ToString(),
+            _usageOverlayOptions.Corner.ToString());
+
+        _suppressTuningChange = false;
+    }
+
+    private void OnWatchTuningChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressTuningChange)
+        {
+            return;
+        }
+
+        if (double.TryParse(TagOf(WatchIntervalCombo), CultureInfo.InvariantCulture, out var ms))
+        {
+            _watchOptions = _watchOptions with { Interval = TimeSpan.FromMilliseconds(ms) };
+        }
+
+        if (double.TryParse(TagOf(WatchThresholdCombo), CultureInfo.InvariantCulture, out var threshold))
+        {
+            _watchOptions = _watchOptions with { Threshold = threshold };
+        }
+
+        _watchOptions.Save();
+
+        // 動いている最中なら作り直す。次に ON にするまで効かないと、変えた結果が分からない。
+        if (AutoWatchCheck.IsChecked == true)
+        {
+            SetAutoWatch(true);
+        }
+
+        StatusText.Text = $"自動監視: {_watchOptions.Interval.TotalSeconds:0.#} 秒ごと / 感度 {_watchOptions.Threshold:0.###}";
+    }
+
+    private void OnCursorTuningChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressTuningChange)
+        {
+            return;
+        }
+
+        if (double.TryParse(TagOf(DwellTimeCombo), CultureInfo.InvariantCulture, out var ms))
+        {
+            _cursorOptions = _cursorOptions with { DwellTime = TimeSpan.FromMilliseconds(ms) };
+        }
+
+        if (TagOf(CursorRegionCombo)?.Split('x') is [var w, var h]
+            && int.TryParse(w, CultureInfo.InvariantCulture, out var width)
+            && int.TryParse(h, CultureInfo.InvariantCulture, out var height))
+        {
+            _cursorOptions = _cursorOptions with { Width = width, Height = height };
+        }
+
+        _cursorOptions.Save();
+
+        if (CursorDwellCheck.IsChecked == true)
+        {
+            SetCursorDwell(true);
+        }
+
+        StatusText.Text = $"カーソル静止: {_cursorOptions.DwellTime.TotalMilliseconds:F0} ms / "
+            + $"{_cursorOptions.Width}x{_cursorOptions.Height}";
+    }
+
+    private void OnOverlayLookChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressTuningChange)
+        {
+            return;
+        }
+
+        if (Enum.TryParse<OverlayTextSize>(TagOf(TextSizeCombo), out var size))
+        {
+            _overlayOptions = _overlayOptions with { TextSize = size };
+        }
+
+        if (double.TryParse(TagOf(AutoHideCombo), CultureInfo.InvariantCulture, out var seconds))
+        {
+            _overlayOptions = _overlayOptions with { AutoHideAfter = TimeSpan.FromSeconds(seconds) };
+        }
+
+        _overlayOptions.Save();
+
+        // 出している最中なら描き直す。次の翻訳まで分からないと、大きさを選び直せない。
+        if (_overlay is { } overlay)
+        {
+            overlay.Options = _overlayOptions;
+            overlay.Refresh();
+        }
+
+        StatusText.Text = $"訳文の見た目: 文字 {TextSizeLabel(_overlayOptions.TextSize)} / "
+            + $"{_overlayOptions.AutoHideAfter.TotalSeconds:F0} 秒で消える";
+    }
+
+    private static string TextSizeLabel(OverlayTextSize size) => size switch
+    {
+        OverlayTextSize.Small => "小",
+        OverlayTextSize.Large => "大",
+        _ => "中",
+    };
+
+    private void OnUsageCornerChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressTuningChange || !Enum.TryParse<OverlayCorner>(TagOf(UsageCornerCombo), out var corner))
+        {
+            return;
+        }
+
+        _usageOverlayOptions = _usageOverlayOptions with { Corner = corner };
+        _usageOverlayOptions.Save();
+        _usageOverlay?.Apply(_usageOverlayOptions);
+    }
+
+    /// <summary>
+    /// 高速モードの認識言語を一覧へ反映する（FR-OCR-02 / 10）。
+    /// </summary>
+    /// <remarks>
+    /// <b>既定のエンジンでは出さない。</b>PaddleOCR は同梱のモデルが
+    /// 英・中・日をまとめて扱うため、選ばせる意味がない。
+    /// </remarks>
+    private void RefreshOcrLanguages()
+    {
+        var available = WindowsOcrEngine.AvailableLanguages;
+        var isFast = _ocrOptions.Engine == OcrEngineChoice.Windows;
+
+        OcrLanguagePanel.Visibility = isFast && available.Count > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        if (!isFast || available.Count == 0)
+        {
+            return;
+        }
+
+        _suppressTuningChange = true;
+        OcrLanguageCombo.ItemsSource = available.ToArray();
+        OcrLanguageCombo.SelectedItem =
+            available.FirstOrDefault(t => string.Equals(t, _ocrOptions.WindowsLanguage, StringComparison.OrdinalIgnoreCase))
+            ?? available[0];
+        _suppressTuningChange = false;
+    }
+
+    private void OnOcrLanguageChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressTuningChange || OcrLanguageCombo.SelectedItem is not string language)
+        {
+            return;
+        }
+
+        _ocrOptions = _ocrOptions with { WindowsLanguage = language };
+        _ocrOptions.Save();
+
+        _ocrEngine.Dispose();
+        _ocrEngine = CreateOcrEngine();
+        RefreshOcrEngineState();
+
+        StatusText.Text = $"原文の言語を {language} にしました。";
+        _ = WarmUpOcrAsync();
+    }
+
     private void OnDeleteApiKeyClick(object sender, RoutedEventArgs e)
     {
         _apiKeyStore.Delete();
@@ -2295,7 +2532,16 @@ private void StartHotkey()
     /// <para>所有させない代わりに、閉じるのは <see cref="Dispose"/> で明示的に行う。
     /// 最前面は Topmost が、Alt+Tab に出ないことは WS_EX_TOOLWINDOW が担うため、所有関係は要らない。</para>
     /// </remarks>
-    private OverlayWindow EnsureOverlay() => _overlay ??= new OverlayWindow();
+    private OverlayWindow EnsureOverlay()
+    {
+        if (_overlay is null)
+        {
+            // 設定（FR-OVL-05 / 06）は作った時点で渡す。
+            _overlay = new OverlayWindow { Options = _overlayOptions };
+        }
+
+        return _overlay;
+    }
 
     // ===== ホットキーで画面を翻訳（FR-MOD-01 手動モード） =====
 
