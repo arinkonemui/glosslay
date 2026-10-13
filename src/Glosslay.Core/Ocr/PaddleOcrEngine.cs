@@ -160,7 +160,8 @@ public sealed class PaddleOcrEngine(PaddleOcrOptions? options = null) : IOcrEngi
         var (targetWidth, targetHeight) = OcrImagePreprocessor.ComputeDetectionSize(
             image.Width, image.Height, _options.DetectionMaxSideLength);
 
-        var tensorData = OcrImagePreprocessor.BuildDetectionTensor(image, targetWidth, targetHeight);
+        var tensorData = OcrImagePreprocessor.BuildDetectionTensor(
+            image, targetWidth, targetHeight, _options.CpuThreads);
         cancellationToken.ThrowIfCancellationRequested();
 
         var tensor = new DenseTensor<float>(tensorData, [1, 3, targetHeight, targetWidth]);
@@ -173,7 +174,7 @@ public sealed class PaddleOcrEngine(PaddleOcrOptions? options = null) : IOcrEngi
         var mapWidth = map.Dimensions[^1];
 
         return _options.PostProcessor.Extract(
-            map.ToArray(), mapWidth, mapHeight, image.Width, image.Height);
+            AsSpan(map), mapWidth, mapHeight, image.Width, image.Height);
     }
 
     private (string Text, float Confidence, IReadOnlyList<RecognizedCharacter> Characters)
@@ -193,8 +194,19 @@ public sealed class PaddleOcrEngine(PaddleOcrOptions? options = null) : IOcrEngi
         var timeSteps = output.Dimensions[^2];
         var classCount = output.Dimensions[^1];
 
-        return _decoder!.Decode(output.ToArray(), timeSteps, classCount);
+        return _decoder!.Decode(AsSpan(output), timeSteps, classCount);
     }
+
+    /// <summary>
+    /// 推論結果を写さずに読む。<b>読むのは <c>results</c> を破棄する前に限る。</b>
+    /// </summary>
+    /// <remarks>
+    /// <para>認識の出力は 1 行で 40 時刻 × 18,710 クラス ≒ 3MB ある。
+    /// 以前は <c>ToArray()</c> で毎行写しており、全画面 28 行で 84MB を大きなオブジェクトとして確保していた
+    /// （1 枚あたり 23.5ms・2026-10-13 の実測）。デコードも後処理も <c>ReadOnlySpan</c> を受けるので写す必要がない。</para>
+    /// </remarks>
+    private static ReadOnlySpan<float> AsSpan(Tensor<float> tensor) =>
+        tensor is DenseTensor<float> dense ? dense.Buffer.Span : tensor.ToArray();
 
     public void Dispose()
     {

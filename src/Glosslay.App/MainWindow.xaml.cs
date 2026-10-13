@@ -197,6 +197,12 @@ public partial class MainWindow : Window, IDisposable
     private OverlayOptions _overlayOptions = OverlayOptions.Load();
 
     private ScreenCapture? _capture;
+
+    /// <summary>
+    /// セッションの作成を 1 本に絞る。前倒しの作成とホットキーが重なると 2 本作られ、片方が漏れる。
+    /// </summary>
+    private readonly SemaphoreSlim _captureStartLock = new(1, 1);
+
     private CaptureTarget? _activeTarget;
     private bool _activeRemoveBorder;
     private bool _activeCaptureCursor;
@@ -1029,14 +1035,19 @@ private void StartHotkey()
         var profile = _profileStore.FindForWindow(
             WindowIdentity.GetClassName(foreground), target.DisplayName);
 
-        if (profile is null
-            || string.Equals(profile.Name, _appliedProfileName, StringComparison.OrdinalIgnoreCase))
+        if (profile is null)
         {
             return;
         }
 
-        ApplyProfile(profile, automatic: true);
-        RefreshProfiles(profile.Name);
+        if (!string.Equals(profile.Name, _appliedProfileName, StringComparison.OrdinalIgnoreCase))
+        {
+            ApplyProfile(profile, automatic: true);
+            RefreshProfiles(profile.Name);
+        }
+
+        // 当て直しで一覧の選択が変わるとセッションが捨てられるため、当てた後で作る。
+        PrewarmCapture(target);
     }
 
     /// <summary>キャプチャ画像の保存先（FR-CFG-00）。</summary>
@@ -1241,6 +1252,7 @@ private void StartHotkey()
         _usageOverlay?.Close();
         _usageOverlay = null;
         ReleaseCapture();
+        _captureStartLock.Dispose();
         _overlay?.Close();
         _inputTrigger?.Dispose();
         _ocrEngine.Dispose();
@@ -1350,29 +1362,65 @@ private void StartHotkey()
     /// <summary>
     /// セッションは開始したまま保持する。作り直すと初回フレームまで数百 ms かかるため。
     /// </summary>
+    /// <remarks>
+    /// 保持している間の 1 枚は 10〜20ms、作成からだと 293ms（2026-10-13 の実測）。
+    /// 作成の費用を押した瞬間に払わないよう、<see cref="PrewarmCapture"/> で前倒しする。
+    /// </remarks>
     private async Task<ScreenCapture> EnsureCaptureAsync(CaptureTarget target)
     {
-        var removeBorder = RemoveBorderCheck.IsChecked == true;
-        var captureCursor = CaptureCursorCheck.IsChecked == true;
-
-        if (_capture is not null
-            && _activeTarget == target
-            && _activeRemoveBorder == removeBorder
-            && _activeCaptureCursor == captureCursor)
+        await _captureStartLock.WaitAsync().ConfigureAwait(true);
+        try
         {
-            return _capture;
+            var removeBorder = RemoveBorderCheck.IsChecked == true;
+            var captureCursor = CaptureCursorCheck.IsChecked == true;
+
+            if (_capture is not null
+                && _activeTarget == target
+                && _activeRemoveBorder == removeBorder
+                && _activeCaptureCursor == captureCursor)
+            {
+                return _capture;
+            }
+
+            ReleaseCapture();
+
+            var capture = await ScreenCapture.StartAsync(target, removeBorder, captureCursor).ConfigureAwait(true);
+            capture.Closed += OnCaptureClosed;
+
+            _capture = capture;
+            _activeTarget = target;
+            _activeRemoveBorder = removeBorder;
+            _activeCaptureCursor = captureCursor;
+            return capture;
         }
+        finally
+        {
+            _captureStartLock.Release();
+        }
+    }
 
-        ReleaseCapture();
-
-        var capture = await ScreenCapture.StartAsync(target, removeBorder, captureCursor).ConfigureAwait(true);
-        capture.Closed += OnCaptureClosed;
-
-        _capture = capture;
-        _activeTarget = target;
-        _activeRemoveBorder = removeBorder;
-        _activeCaptureCursor = captureCursor;
-        return capture;
+    /// <summary>
+    /// 撮影のセッションを先に作っておく。最初のホットキーで 293ms 待たせないため。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>プロファイルの当たったゲームが前面に来たときだけ行う。</b>
+    /// 「このゲームを翻訳する」と利用者が決めている、確かな合図だから。
+    /// 一覧の選択では行わない。起動時に一覧の先頭が自動で選ばれるため、
+    /// 関係の無いウィンドウを撮り始め、枠を消せない環境では黄色い枠まで出てしまう。</para>
+    /// <para><b>失敗しても何も言わない。</b>前倒しは速くするためだけのもので、
+    /// 撮れなければホットキーを押したときに改めて作り、そこで理由を出す。</para>
+    /// </remarks>
+    private async void PrewarmCapture(CaptureTarget target)
+    {
+        try
+        {
+            await EnsureCaptureAsync(target).ConfigureAwait(true);
+        }
+#pragma warning disable CA1031 // 前倒しの失敗は、押したときの経路が改めて扱う（上の注記）。
+        catch (Exception)
+#pragma warning restore CA1031
+        {
+        }
     }
 
     private void OnCaptureClosed(object? sender, EventArgs e)

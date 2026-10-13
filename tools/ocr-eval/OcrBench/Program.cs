@@ -158,11 +158,42 @@ internal static partial class Program
             options = options with { DetectionMaxSideLength = detMax };
         }
 
+        // 検出の後処理のつまみ。既定はモデル同梱の inference.yml の値で、
+        // ここも --detmax と同じく「指定が無ければ既定に触らない」。
+        var current = options.PostProcessor;
+        var post = new DbPostProcessor
+        {
+            Threshold = TryReadSingle(args, "--thresh=", out var thresh) ? thresh : current.Threshold,
+            BoxThreshold = TryReadSingle(args, "--boxthresh=", out var boxThresh) ? boxThresh : current.BoxThreshold,
+            UnclipRatio = TryReadSingle(args, "--unclip=", out var unclip) ? unclip : current.UnclipRatio,
+            MinSize = current.MinSize,
+            MaxCandidates = current.MaxCandidates,
+        };
+
+        options = options with { PostProcessor = post };
+
+        Console.WriteLine($"検出の後処理: thresh {post.Threshold} / box_thresh {post.BoxThreshold}"
+                          + $" / unclip {post.UnclipRatio}");
+
         Console.WriteLine($"検出の長辺  : {(options.DetectionMaxSideLength > 0
             ? options.DetectionMaxSideLength.ToString(CultureInfo.CurrentCulture)
             : "制限なし")}");
 
         return options;
+    }
+
+    /// <summary><c>--名前=値</c> の形で小数を 1 つ読む。無ければ false。</summary>
+    private static bool TryReadSingle(string[] args, string prefix, out float value)
+    {
+        var given = args.FirstOrDefault(a => a.StartsWith(prefix, StringComparison.Ordinal));
+        if (given is not null
+            && float.TryParse(given[prefix.Length..], CultureInfo.InvariantCulture, out value))
+        {
+            return true;
+        }
+
+        value = 0f;
+        return false;
     }
 
     private static async Task MeasureAsync(

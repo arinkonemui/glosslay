@@ -22,8 +22,12 @@ namespace Glosslay.Translation;
 ///   <item><term><c>decoder_model</c></term><description>1 手目。過去の状態を持たない</description></item>
 ///   <item><term><c>decoder_with_past_model</c></term><description>2 手目以降。前の手の状態を受け取る</description></item>
 /// </list>
-/// <para><b>行はまとめて 1 回で流す。</b>1 行ずつ回すと符号器と復号の初期化を行数分繰り返す。
-/// 2026-09-26 の計測では 15 行まとめて 293ms だった（PLAN.md 課題4）。</para>
+/// <para><b>行は 1 件ずつ、並べて訳す。</b>まとめて 1 回で流すと訳文が同じ画面の他の行に
+/// 左右される（<see cref="LocalNmtOptions.BatchLines"/>）。1 件ずつなら行どうしが影響しないため、
+/// 並べても<b>訳文は変わらない</b>（全画面 15 枚でバイト単位の一致を確認・2026-10-13）。</para>
+/// <para><b>並べる数と推論のスレッド数を入れ替えてある。</b>復号は 1 語ずつの小さな計算で、
+/// 1 行に 4 スレッドを当てても使い切れない。<b>同じ 4 スレッドなら 4 行を 1 スレッドずつ</b>の方が速い。
+/// 全画面 15 枚の平均で 532ms → 283ms（2026-10-13）。CPU の上限（FR-OCR-11）は変わらない。</para>
 ///
 /// <para><b>探索は貪欲（ビーム幅 1）。</b>ビーム 4 は同じ 15 行で 1019ms かかり、
 /// 性能要件 1.5 秒の大半を使ってしまう。設定で選べるようにはしていない
@@ -194,9 +198,24 @@ public sealed class LocalNmtTranslator : ITranslator
 
         // 既定は 1 件ずつ。詰め物が無いぶん、同じ原文がいつも同じ訳になる
         // （LocalNmtOptions.BatchLines に実測と理由）。
-        foreach (var index in targets)
+        // 行どうしが影響しないので、並べても訳文は変わらない。
+        try
         {
-            output[index] = Translate([lines[index]], cancellationToken)[0];
+            Parallel.For(
+                0,
+                targets.Count,
+                new ParallelOptions
+                {
+                    MaxDegreeOfParallelism = _options.CpuThreads,
+                    CancellationToken = cancellationToken,
+                },
+                n => output[targets[n]] = Translate([lines[targets[n]]], cancellationToken)[0]);
+        }
+        catch (AggregateException ex) when (ex.InnerExceptions.All(e => e is OperationCanceledException))
+        {
+            // 行の中で止まった場合も、呼び出し側には普通のキャンセルとして返す。
+            cancellationToken.ThrowIfCancellationRequested();
+            throw;
         }
 
         return output;
@@ -381,7 +400,9 @@ public sealed class LocalNmtTranslator : ITranslator
         using var sessionOptions = new SessionOptions
         {
             // ゲームと CPU を奪い合わない（OCR の FR-OCR-11 と同じ）。
-            IntraOpNumThreads = _options.CpuThreads,
+            // 1 件ずつ訳すときは行を CpuThreads 本並べるので、1 本あたりは 1 スレッド。
+            // 合計は CpuThreads のまま変わらない（クラスの注記に実測）。
+            IntraOpNumThreads = _options.BatchLines ? _options.CpuThreads : 1,
             InterOpNumThreads = 1,
             GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
 

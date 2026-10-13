@@ -34,7 +34,11 @@ public sealed record LocalNmtOptions
     /// <summary>
     /// 推論スレッド数。
     /// </summary>
-    /// <remarks>OCR（FR-OCR-11）と同じ考え方で、ゲームと CPU を奪い合わないよう抑える。</remarks>
+    /// <remarks>
+    /// <para>OCR（FR-OCR-11）と同じ考え方で、ゲームと CPU を奪い合わないよう抑える。</para>
+    /// <para><b>1 件ずつ訳すとき（既定）は、並べる行の数として使う。</b>
+    /// 1 行あたりの推論は 1 スレッドで、合計がこの値になる（<see cref="LocalNmtTranslator"/>）。</para>
+    /// </remarks>
     public int CpuThreads { get; init; } = Math.Max(2, Environment.ProcessorCount / 4);
 
     /// <summary>
