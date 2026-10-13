@@ -872,16 +872,26 @@ internal static class Program
         CheckText("絞っていなければ絞る案内を出す", whole.Contains("範囲を絞ると", StringComparison.Ordinal));
         CheckText("絞っていれば出さない", !narrowed.Contains("範囲を絞ると", StringComparison.Ordinal));
 
+        // 所要時間はぼかして出す（2026-10-13・人間の判断）。内訳や ms は利用者に要らない。
+        CheckText("全画面の時間をぼかして出す", whole.Contains("1 秒程度", StringComparison.Ordinal));
+        CheckText("絞った場合の時間をぼかして出す", narrowed.Contains("0.5 秒程度", StringComparison.Ordinal));
+        CheckText(
+            "内訳の数字を出さない",
+            !whole.Contains("撮影", StringComparison.Ordinal) && !whole.Contains("ms", StringComparison.Ordinal)
+            && !whole.Contains('+', StringComparison.Ordinal));
+
         var wide = AutoWatchNotice.Estimate(hasRegion: false);
         var tight = AutoWatchNotice.Estimate(hasRegion: true);
         CheckText(
             "範囲を絞った方が速い",
-            tight.Slowest < wide.Fastest,
-            $"← 約 {tight.Slowest.TotalSeconds:0.#} 秒 対 {wide.Fastest.TotalSeconds:0.#}〜{wide.Slowest.TotalSeconds:0.#} 秒");
+            tight.Typical < wide.Typical,
+            $"← ふだん 約 {tight.Typical.TotalSeconds:0.##} 秒 対 {wide.Typical.TotalSeconds:0.##} 秒");
 
-        // 性能要件は 1.5 秒（PLAN.md 課題4）。絞れば収まり、全画面では収まらない。
-        CheckText("絞れば 1.5 秒に収まる", tight.Slowest <= TimeSpan.FromSeconds(1.5));
-        CheckText("全画面は収まらないと分かる", wide.Fastest > TimeSpan.FromSeconds(1.5));
+        // 性能要件は 1.5 秒（PLAN.md 課題4・2026-10-13 に解決）。全画面の最も遅い画面でも収まる。
+        CheckText(
+            "全画面の最も遅い画面でも 1.5 秒に収まる",
+            wide.Worst <= TimeSpan.FromSeconds(1.5),
+            $"← {wide.Worst.TotalSeconds:0.##} 秒");
 
         Console.WriteLine();
         Console.WriteLine("--- 絞っていないときの文面 ---");

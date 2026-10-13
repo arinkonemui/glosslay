@@ -4,8 +4,9 @@ namespace Glosslay.Ocr;
 /// 検出モデルが出す確率マップから、文字領域の矩形を取り出す（DB の後処理）。
 /// </summary>
 /// <remarks>
-/// <para>PaddleOCR の <c>DBPostProcess</c> に相当する。既定のパラメータはモデル同梱の
-/// <c>inference.yml</c> の値（thresh 0.2 / box_thresh 0.45 / unclip_ratio 1.4）。</para>
+/// <para>PaddleOCR の <c>DBPostProcess</c> に相当する。<c>unclip_ratio</c> はモデル同梱の
+/// <c>inference.yml</c> の値（1.4）のまま。<b>閾値 2 つは実測して変えてある</b>
+/// （本家は thresh 0.2 / box_thresh 0.45。理由は各プロパティ）。</para>
 /// <para><b>本家との違い</b>: 本家は輪郭追跡と最小面積の回転矩形を求めるが、
 /// ここでは連結成分の外接矩形（軸に平行）で代用している。
 /// 対象が横書きのゲーム UI テキストに限られ（SPEC.md §1 で縦書きは対象外）、
@@ -15,10 +16,27 @@ namespace Glosslay.Ocr;
 public sealed class DbPostProcessor
 {
     /// <summary>二値化の閾値。これを超えた画素を文字領域の候補とする。</summary>
-    public float Threshold { get; init; } = 0.2f;
+    /// <remarks>
+    /// 本家の 0.2 から <b>0.15</b> へ下げた（2026-10-13・人間の承認）。
+    /// <see cref="BoxThreshold"/> と組で決めている。理由と実測はそちら。
+    /// </remarks>
+    public float Threshold { get; init; } = 0.15f;
 
     /// <summary>領域の平均確率がこれ未満なら捨てる。</summary>
-    public float BoxThreshold { get; init; } = 0.45f;
+    /// <remarks>
+    /// <para>本家の 0.45 から <b>0.53</b> へ上げた（2026-10-13・人間の承認）。
+    /// <b>アイコンや模様のような「文字らしいが自信の無い枠」を捨て、原文に無い数値を減らす</b>
+    /// （RULES.md 🟡-7 / PLAN.md 課題6）。</para>
+    /// <para>41 枚・前処理なしで、本家の値（0.2 / 0.45）に対し
+    /// 一致度 87.2% → 87.0% / 読めた数値 195 → 196 / <b>原文に無い数値 18 → 11</b>。
+    /// <b>どの画像でも本物の数値の読み落としは増えていない。</b></para>
+    /// <para><b>上げすぎると本物を捨てる。</b>0.52〜0.55 は結果が同じ平らな区間で、
+    /// <b>0.57 から本物の数値を落とし始める</b>（2 枚）。崖から離すためにその中ほどの 0.53 にしてある。
+    /// 振り直すときは <c>OcrBench --thresh= --boxthresh=</c>（<c>tools/ocr-eval/README.md</c>）。</para>
+    /// <para><b>代償: 画像の端で切れている行が落ちやすい</b>（<c>hover_box500</c> の最下行）。
+    /// 切れた行は落としてよいと判断した（2026-10-13・人間の判断）。</para>
+    /// </remarks>
+    public float BoxThreshold { get; init; } = 0.53f;
 
     /// <summary>矩形を広げる比率。文字の縁が切れるのを防ぐ。</summary>
     public float UnclipRatio { get; init; } = 1.4f;
