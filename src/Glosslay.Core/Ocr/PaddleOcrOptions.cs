@@ -34,6 +34,27 @@ public sealed record PaddleOcrOptions
     /// </remarks>
     public int CpuThreads { get; init; } = Math.Max(2, Environment.ProcessorCount / 4);
 
+    /// <summary>
+    /// 検出に渡す画像の長辺の上限。<c>0</c> なら縮めない。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>読み取り時間の固定費はここで決まる。</b>
+    /// これを入れる前は全画面 1920x1080 が縮まず 1920x1088（2.09M 画素）のまま
+    /// 検出へ流れており、それが固定費 695ms の正体だった（2026-10-13 の実測）。</para>
+    /// <para><b>既定 1280 の根拠</b>（全画面 16 枚・前処理なし・2026-10-13）。
+    /// 利用者の手間ゼロで性能要件 1.5 秒に収まる唯一の手。</para>
+    /// <list type="table">
+    ///   <item><term>無制限（2.09M 画素）</term><description>1,075ms / 一致度 84.1% → 経路 1,658ms・超過</description></item>
+    ///   <item><term><b>1280（0.92M 画素）</b></term><description><b>678ms / 一致度 84.4% → 経路 1,261ms・収まる</b></description></item>
+    ///   <item><term>960（0.52M 画素）</term><description>554ms / 一致度 82.6% → 細かい文字で崩れる</description></item>
+    /// </list>
+    /// <para><b>960 まで下げない。</b>さらに速いが、文字の多い画面で一致度が落ちる
+    /// （<c>tyr_tank_fuse</c> 92.2% → 82.4%）。1280 なら一致度はむしろ上がっており、
+    /// <b>「原文に無い数値」も増えない</b>（41 枚で 19 → 18 件。RULES.md 🟡-7）。</para>
+    /// <para>計測し直すときは <c>OcrBench --detmax=&lt;値&gt;</c>。</para>
+    /// </remarks>
+    public int DetectionMaxSideLength { get; init; } = 1280;
+
     /// <summary>この信頼度未満の行は捨てる（FR-OCR-06）。</summary>
     public float MinConfidence { get; init; } = 0.5f;
 

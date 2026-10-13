@@ -97,11 +97,7 @@ internal static partial class Program
 
         using IOcrEngine engine = useWindows
             ? new WindowsOcrEngine(language)
-            : new PaddleOcrEngine(new PaddleOcrOptions
-            {
-                ModelDirectory = modelDirectory,
-                CpuThreads = 4,
-            });
+            : new PaddleOcrEngine(BuildPaddleOptions(args, modelDirectory));
 
         try
         {
@@ -137,6 +133,36 @@ internal static partial class Program
 
         PrintSummary(totals, samples.Count);
         return 0;
+    }
+
+    /// <summary>
+    /// PaddleOCR の設定を組み立てる。
+    /// </summary>
+    /// <remarks>
+    /// <b><c>--detmax</c> が無ければ既定に触らない。</b>常に代入すると、
+    /// 製品の既定（<c>DetectionMaxSideLength</c>）を 0 で潰してしまい、
+    /// <b>計測が製品と違う条件になる</b>。
+    /// </remarks>
+    private static PaddleOcrOptions BuildPaddleOptions(string[] args, string modelDirectory)
+    {
+        var options = new PaddleOcrOptions
+        {
+            ModelDirectory = modelDirectory,
+            CpuThreads = 4,
+        };
+
+        var given = args.FirstOrDefault(a => a.StartsWith("--detmax=", StringComparison.Ordinal));
+        if (given is not null
+            && int.TryParse(given["--detmax=".Length..], CultureInfo.InvariantCulture, out var detMax))
+        {
+            options = options with { DetectionMaxSideLength = detMax };
+        }
+
+        Console.WriteLine($"検出の長辺  : {(options.DetectionMaxSideLength > 0
+            ? options.DetectionMaxSideLength.ToString(CultureInfo.CurrentCulture)
+            : "制限なし")}");
+
+        return options;
     }
 
     private static async Task MeasureAsync(

@@ -158,7 +158,7 @@ public sealed class PaddleOcrEngine(PaddleOcrOptions? options = null) : IOcrEngi
         Bgra32Image image, CancellationToken cancellationToken)
     {
         var (targetWidth, targetHeight) = OcrImagePreprocessor.ComputeDetectionSize(
-            image.Width, image.Height);
+            image.Width, image.Height, _options.DetectionMaxSideLength);
 
         var tensorData = OcrImagePreprocessor.BuildDetectionTensor(image, targetWidth, targetHeight);
         cancellationToken.ThrowIfCancellationRequested();

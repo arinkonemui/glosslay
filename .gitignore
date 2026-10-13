@@ -42,6 +42,10 @@ artifacts/
 models/
 *.onnx
 
+# 量子化した派生物（tools/ocr-eval/quantize.py の出力）。
+# 元モデルから作り直せるため残さない。2026-10-13 の計測では採用しなかった（PLAN.md）。
+tools/ocr-eval/models_int8/
+
 # --- Python（PoC の OCR 検証ツール: tools/ocr-eval）---
 # PaddleOCR の検証は Python 側で行う。仮想環境と DL 済みモデルは巨大なため除外する。
 # スクリプト本体はコミットする。

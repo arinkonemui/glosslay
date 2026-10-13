@@ -96,9 +96,10 @@
                     <TextBlock x:Name="OcrEngineStateText" TextWrapping="Wrap" FontSize="11"
                                Foreground="#666" Text="確認中…" />
                     <RadioButton x:Name="OcrPaddleRadio" GroupName="OcrEngine" Margin="0,4,0,0"
-                                 Content="既定（PaddleOCR・精度優先）" Checked="OnOcrEngineChanged" />
+                                 Content="既定（PaddleOCR）— おすすめ" Checked="OnOcrEngineChanged" />
                     <RadioButton x:Name="OcrWindowsRadio" GroupName="OcrEngine" Margin="0,2,0,0"
-                                 Content="高速モード（Windows OCR・速度優先）" Checked="OnOcrEngineChanged" />
+                                 Content="高速モード（Windows OCR）— 上級者向け・要 言語パック"
+                                 Checked="OnOcrEngineChanged" />
                     <TextBlock x:Name="OcrEngineNote" TextWrapping="Wrap" Foreground="#666"
                                FontSize="11" Margin="0,4,0,0" Text="" />
                     <TextBlock x:Name="OcrLanguageNote" TextWrapping="Wrap" Foreground="#666"

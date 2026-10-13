@@ -46,19 +46,28 @@ public static class OcrSpeedFacts
     /// 高速モードを選ぶときに出す説明（FR-OCR-03）。
     /// </summary>
     /// <remarks>
-    /// <b>速さだけを言わない。</b>利用者が「速度 &gt; 精度」を望んでいても、
+    /// <para><b>速さだけを言わない。</b>利用者が「速度 &gt; 精度」を望んでいても、
     /// <b>数値が捏造されることまで望んでいるとは限らない</b>。
-    /// 判断の材料をそろえて渡す。
+    /// 判断の材料をそろえて渡す。</para>
+    /// <para><b>言語パックの話を先に置く。</b>2026-10-13 の判断で高速モードの位置づけを下げた。
+    /// 日本語以外の原文では<b>利用者が自分で言語を追加しない限り使えない</b>ため、
+    /// 速さの数字より先に、使えるかどうかが分かるようにする。</para>
     /// </remarks>
     public static string FastModeTradeoff =>
-        $"全画面の読み取りが約 {PaddleFullScreenMs} ms → 約 {WindowsFullScreenMs} ms になります"
+        "⚠️ 原文の言語が下の一覧に無ければ、Windows に言語を追加しないと使えません。"
+        + $"追加できれば全画面の読み取りは約 {PaddleFullScreenMs} ms → 約 {WindowsFullScreenMs} ms"
         + $"（{SampleCount} 枚の実測・{MeasuredOn}）。"
         + $"ただし正解との一致度が {PaddleSimilarity:0.#}% → {WindowsSimilarity:0.#}% に下がり、"
         + $"原文に無い数値が {PaddleExtraNumbers} 件 → {WindowsExtraNumbers} 件に増えます。"
         + "セリフを読むには十分ですが、カードや数値を読むには向きません。";
 
     /// <summary>既定のエンジンを選んでいるときの説明。</summary>
+    /// <remarks>
+    /// <b>「遅い」で終わらせない。</b>既定のまま速くする手がある
+    /// （検出に渡す画像の大きさ。PLAN.md「読み取りを速くする」）ことが分かっており、
+    /// 利用者には範囲を絞る方法を案内する。
+    /// </remarks>
     public static string DefaultModeNote =>
-        $"精度を優先します。全画面の読み取りに約 {PaddleFullScreenMs} ms かかり、"
-        + "性能要件の 1.5 秒には収まりません。範囲を絞ると大きく短くなります。";
+        "精度を優先します。ほとんどの場合はこのままで問題ありません。"
+        + "プレビューをドラッグして範囲を絞ると、読み取りは大きく速くなります。";
 }

@@ -38,20 +38,40 @@ public static class OcrImagePreprocessor
     /// <summary>
     /// 検出モデルへ渡す入力サイズを求める。
     /// </summary>
+    /// <param name="width">元の幅。</param>
+    /// <param name="height">元の高さ。</param>
+    /// <param name="maxSideLength">
+    /// 長辺の上限。<c>0</c> なら縮めない（<c>limit_type="min"</c> のみ）。
+    /// </param>
     /// <remarks>
-    /// 短辺が <see cref="DetectionLimitSideLength"/> 未満なら、その値になるよう<b>拡大</b>する。
+    /// <para>短辺が <see cref="DetectionLimitSideLength"/> 未満なら、その値になるよう<b>拡大</b>する。
     /// そのうえで 32 の倍数へ丸める。小さい領域ほど拡大率が上がるため、
-    /// 検出コストは元サイズに比例しない点に注意（PLAN.md P0-4 の申し送り）。
+    /// 検出コストは元サイズに比例しない点に注意（PLAN.md P0-4 の申し送り）。</para>
+    /// <para><b>縮める側の上限は既定では効かない。</b>
+    /// 全画面 1920x1080 はそのまま 1920x1088（2.09M 画素）で検出に流れており、
+    /// これが固定費 695ms の正体（2026-10-13 の実測）。
+    /// <paramref name="maxSideLength"/> に 960 を渡せば 960x544（0.52M 画素）になる。
+    /// <b>小さい文字を取りこぼすため、必ず実測してから既定を変えること。</b></para>
     /// </remarks>
-    public static (int Width, int Height) ComputeDetectionSize(int width, int height)
+    public static (int Width, int Height) ComputeDetectionSize(
+        int width, int height, int maxSideLength = 0)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
+        ArgumentOutOfRangeException.ThrowIfNegative(maxSideLength);
 
         var shortSide = Math.Min(width, height);
         var ratio = shortSide < DetectionLimitSideLength
             ? (double)DetectionLimitSideLength / shortSide
             : 1.0;
+
+        // 長辺が上限を超えるなら縮める。拡大の判断より後に見る
+        // （小さい画像を拡大してから上限で切る、という順序）。
+        var longSideNow = Math.Max(width, height) * ratio;
+        if (maxSideLength > 0 && longSideNow > maxSideLength)
+        {
+            ratio *= maxSideLength / longSideNow;
+        }
 
         var resizedWidth = (int)(width * ratio);
         var resizedHeight = (int)(height * ratio);
