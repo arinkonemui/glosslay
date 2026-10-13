@@ -90,6 +90,21 @@
                     <CheckBox x:Name="RemoveBackgroundCheck" Content="背景除去（イラスト背景対策）" Margin="0,2" />
                     <CheckBox x:Name="BinarizeCheck" Content="二値化" Margin="0,2" />
                     <CheckBox x:Name="InvertCheck" Content="明暗を反転" Margin="0,2" />
+
+                    <!-- FR-OCR-03。既定は PaddleOCR。高速モードは代償を数字で示してから選ばせる。 -->
+                    <TextBlock Text="読み取りエンジン (FR-OCR-03)" Margin="0,10,0,2" FontSize="11" />
+                    <TextBlock x:Name="OcrEngineStateText" TextWrapping="Wrap" FontSize="11"
+                               Foreground="#666" Text="確認中…" />
+                    <RadioButton x:Name="OcrPaddleRadio" GroupName="OcrEngine" Margin="0,4,0,0"
+                                 Content="既定（PaddleOCR・精度優先）" Checked="OnOcrEngineChanged" />
+                    <RadioButton x:Name="OcrWindowsRadio" GroupName="OcrEngine" Margin="0,2,0,0"
+                                 Content="高速モード（Windows OCR・速度優先）" Checked="OnOcrEngineChanged" />
+                    <TextBlock x:Name="OcrEngineNote" TextWrapping="Wrap" Foreground="#666"
+                               FontSize="11" Margin="0,4,0,0" Text="" />
+                    <TextBlock x:Name="OcrLanguageNote" TextWrapping="Wrap" Foreground="#666"
+                               FontSize="11" Margin="0,4,0,0" Text="" />
+                    <Button Content="言語を追加する設定を開く" Click="OnOpenLanguageSettingsClick"
+                            Margin="0,6,0,0" />
                     <TextBlock TextWrapping="Wrap" Foreground="#666" FontSize="11" Margin="0,6,0,0"
                                Text="プレビュー上をドラッグすると、その範囲だけを OCR する。範囲を絞ると速くなる。" />
                     <Button Content="範囲の指定を解除" Click="OnClearRegionClick" Margin="0,6,0,0" />

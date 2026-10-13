@@ -143,6 +143,36 @@ dotnet run --project tools/ocr-eval/OcrBench -- tools/ocr-eval/samples tools/ocr
 
 > **TSV はゲーム画面の認識結果なのでコミットしません。** 一時ディレクトリに出してください。
 
+### エンジンを比べる（FR-OCR-03）
+
+| 引数 | 何をするか |
+|---|---|
+| `--windows` | PaddleOCR ではなく **Windows 同梱の OCR**（高速モード）で測る |
+| `--lang=xx` | 高速モードの認識言語。既定は利用者の言語設定 |
+| `--quick` | 前処理を **前処理なし / 拡大2倍** の 2 つに絞る |
+
+```bash
+dotnet run --project tools/ocr-eval/OcrBench -- tools/ocr-eval/samples tools/ocr-eval/models --windows --quick
+dotnet run --project tools/ocr-eval/OcrBench -- tools/ocr-eval/samples tools/ocr-eval/models --quick
+```
+
+**エンジンを比べるときは設定を揃えれば足ります。** 11 通りを両方で回すと計測だけで何十分もかかります。
+
+**2026-10-12 の実測（同じ 41 枚）**
+
+| | PaddleOCR | Windows OCR |
+|---|---|---|
+| 全画面 1920x1080 | 約 1,075 ms | 約 125 ms |
+| 一致度 | 86.9% | 56.5% |
+| **原文に無い数値** | 19 件 | **147 件** |
+
+> **確信度の列に注意。** Windows OCR は確信度を返さないため `1.00` が並びますが、
+> それは「自信がある」ではなく**「分からない」**という意味です。
+> 実行時に `確信度: なし` と断っています（`IOcrEngine.ProvidesConfidence`）。
+>
+> **言語パックで結果が変わります。** 入っていない言語は認識できず、
+> 別の言語の認識器で読ませると**英単語に漢字やかなが混ざります。**
+
 出力は、設定ごとの **一致度**（編集距離ベース）、**数値の正解数**、**余分な数値**、検出行数、処理時間です。
 数値は RULES.md が最重視するため個別に数えています。
 

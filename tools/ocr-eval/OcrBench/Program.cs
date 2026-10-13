@@ -40,18 +40,22 @@ internal static partial class Program
     {
         Console.OutputEncoding = Encoding.UTF8;
 
-        var sampleDirectory = args.Length > 0
-            ? args[0]
+        // --xxx は検査の指定。位置引数として数えない。
+        // 数えてしまうと、--windows という名前のディレクトリを作ってそこへ TSV を落とす。
+        var positional = args.Where(a => !a.StartsWith("--", StringComparison.Ordinal)).ToArray();
+
+        var sampleDirectory = positional.Length > 0
+            ? positional[0]
             : Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "samples");
         sampleDirectory = Path.GetFullPath(sampleDirectory);
 
-        var modelDirectory = args.Length > 1
-            ? args[1]
+        var modelDirectory = positional.Length > 1
+            ? positional[1]
             : Path.GetFullPath(Path.Combine(sampleDirectory, "..", "models"));
 
         // 3 つ目の引数を渡すと、最良の設定の認識結果を箱の座標つきで TSV に落とす。
         // 行結合（FR-TRN-10）のしきい値を決めるための計測用。OCR を回さずに何度でも試せる。
-        var dumpDirectory = args.Length > 2 ? Path.GetFullPath(args[2]) : null;
+        var dumpDirectory = positional.Length > 2 ? Path.GetFullPath(positional[2]) : null;
         if (dumpDirectory is not null)
         {
             Directory.CreateDirectory(dumpDirectory);
@@ -79,22 +83,56 @@ internal static partial class Program
             return 1;
         }
 
-        using var engine = new PaddleOcrEngine(new PaddleOcrOptions
-        {
-            ModelDirectory = modelDirectory,
-            CpuThreads = 4,
-        });
+        // --windows: Windows 同梱の OCR（FR-OCR-03 の高速モード）で測る。
+        // --lang=xx: その認識言語を使う。既定は利用者の言語設定。
+        // 速度と精度の代償を、同じサンプル・同じ前処理で突き合わせるための切り替え。
+        var useWindows = args.Contains("--windows", StringComparer.Ordinal);
+        var language = args.FirstOrDefault(a => a.StartsWith("--lang=", StringComparison.Ordinal))
+                           ?["--lang=".Length..];
 
-        await engine.InitializeAsync().ConfigureAwait(false);
+        if (useWindows)
+        {
+            Console.WriteLine($"入っている言語: {string.Join(" / ", WindowsOcrEngine.AvailableLanguages)}");
+        }
+
+        using IOcrEngine engine = useWindows
+            ? new WindowsOcrEngine(language)
+            : new PaddleOcrEngine(new PaddleOcrOptions
+            {
+                ModelDirectory = modelDirectory,
+                CpuThreads = 4,
+            });
+
+        try
+        {
+            await engine.InitializeAsync().ConfigureAwait(false);
+        }
+        catch (NotSupportedException exception)
+        {
+            // FR-OCR-10: 言語パックが無いだけ。何をすればよいかを出す。
+            Console.WriteLine(exception.Message);
+            return 1;
+        }
+
         Console.WriteLine($"エンジン  : {engine.Name}");
+        Console.WriteLine($"確信度    : {(engine.ProvidesConfidence ? "あり" : "なし（1.00 は「分からない」の意味）")}");
         Console.WriteLine($"サンプル  : {sampleDirectory}（{samples.Count} 件）");
+
+        // --quick: 前処理を 2 つに絞る。エンジンを比べるときは設定を揃えれば足り、
+        // 11 通りを両方のエンジンで回すと計測だけで何十分もかかる。
+        var configurations = args.Contains("--quick", StringComparer.Ordinal)
+            ? Configurations.Where(c => c.Name is "前処理なし" or "拡大2倍").ToArray()
+            : Configurations;
+
+        Console.WriteLine($"前処理    : {configurations.Length} 通り");
         Console.WriteLine();
 
         var totals = new Dictionary<string, Totals>();
 
         foreach (var samplePath in samples)
         {
-            await MeasureAsync(engine, samplePath, totals, dumpDirectory).ConfigureAwait(false);
+            await MeasureAsync(engine, configurations, samplePath, totals, dumpDirectory)
+                .ConfigureAwait(false);
         }
 
         PrintSummary(totals, samples.Count);
@@ -102,7 +140,8 @@ internal static partial class Program
     }
 
     private static async Task MeasureAsync(
-        PaddleOcrEngine engine, string samplePath, Dictionary<string, Totals> totals,
+        IOcrEngine engine, (string Name, PreprocessOptions Options)[] configurations,
+        string samplePath, Dictionary<string, Totals> totals,
         string? dumpDirectory)
     {
         var name = Path.GetFileNameWithoutExtension(samplePath);
@@ -122,7 +161,7 @@ internal static partial class Program
         // 一番成績の良かった設定の認識結果を後で並べて見せる。
         var best = (Similarity: -1.0, Config: string.Empty, Lines: (IReadOnlyList<OcrLine>)[], Extra: (List<string>)[]);
 
-        foreach (var (configName, options) in Configurations)
+        foreach (var (configName, options) in configurations)
         {
             var processed = ImagePreprocessor.Apply(image, options);
             var result = await engine.RecognizeAsync(processed).ConfigureAwait(false);

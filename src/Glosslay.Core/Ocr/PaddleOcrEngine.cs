@@ -31,6 +31,15 @@ public sealed class PaddleOcrEngine(PaddleOcrOptions? options = null) : IOcrEngi
     /// <inheritdoc />
     public bool IsReady => _detection is not null && _recognition is not null;
 
+    /// <summary>
+    /// 確信度を返せる。行の平均と、文字ごとの値の両方を持つ。
+    /// </summary>
+    /// <remarks>
+    /// CTC の各時刻の最大確率から求める。<b>「どれも自信が無い」とは言えない</b>
+    /// （18,710 字の閉じた分類器で、該当なしの出口が無い）点に注意（PLAN.md 課題6）。
+    /// </remarks>
+    public bool ProvidesConfidence => true;
+
     /// <inheritdoc />
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {

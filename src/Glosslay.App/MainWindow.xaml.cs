@@ -39,7 +39,15 @@ public partial class MainWindow : Window, IDisposable
     /// <summary>範囲指定として扱う最小の辺（画素）。これ未満は誤操作とみなす。</summary>
     private const int MinRegionSize = 16;
 
-    private readonly PaddleOcrEngine _ocrEngine = new();
+    /// <summary>
+    /// OCR エンジン（FR-OCR-03）。<b>差し替え点</b>のためインターフェース越しに持つ。
+    /// </summary>
+#pragma warning disable CA1859 // 具象型の方が速いが、ここは高速モードとの差し替え点。
+    private IOcrEngine _ocrEngine = new PaddleOcrEngine();
+#pragma warning restore CA1859
+
+    /// <summary>どちらのエンジンを使うか（FR-OCR-03）。</summary>
+    private OcrEngineOptions _ocrOptions = OcrEngineOptions.Load();
     private readonly ApiKeyStore _apiKeyStore = ApiKeyStore.Gemini;
 
     /// <summary>
@@ -176,6 +184,9 @@ public partial class MainWindow : Window, IDisposable
 
     /// <summary>一覧へ選択を反映している間、SelectionChanged の処理を止める。</summary>
     private bool _suppressLanguageChange;
+
+    /// <summary>ラジオへ選択を反映している間、Checked の処理を止める。</summary>
+    private bool _suppressOcrEngineChange;
 
     private ScreenCapture? _capture;
     private CaptureTarget? _activeTarget;
@@ -1101,6 +1112,101 @@ private void StartHotkey()
             // モデル未配置は想定内。キャプチャ自体は使えるので落とさない。
             StatusText.Text = $"OCR は使えません: {ex.Message}";
         }
+        catch (NotSupportedException ex)
+        {
+            // FR-OCR-10: 高速モードの言語パックが無い。何をすればよいかはメッセージにある。
+            StatusText.Text = ex.Message;
+        }
+
+        RefreshOcrEngineState();
+    }
+
+    // ===== OCR エンジンの選択（FR-OCR-03 / FR-OCR-10） =====
+
+    /// <summary>
+    /// 選択をラジオへ反映し、いま何で動くのかと代償を出す。
+    /// </summary>
+    /// <remarks>
+    /// <b>速さだけを出さない。</b>高速モードは一致度が 30 ポイント落ち、
+    /// 原文に無い数値が 8 倍になる（<see cref="OcrSpeedFacts"/>）。
+    /// 選ぶ前に数字で分かるようにする。
+    /// </remarks>
+    private void RefreshOcrEngineState()
+    {
+        _suppressOcrEngineChange = true;
+        OcrPaddleRadio.IsChecked = _ocrOptions.Engine == OcrEngineChoice.Paddle;
+        OcrWindowsRadio.IsChecked = _ocrOptions.Engine == OcrEngineChoice.Windows;
+        _suppressOcrEngineChange = false;
+
+        OcrEngineNote.Text = _ocrOptions.Engine == OcrEngineChoice.Windows
+            ? OcrSpeedFacts.FastModeTradeoff
+            : OcrSpeedFacts.DefaultModeNote;
+
+        // FR-OCR-10: 言語パックが無ければ、何が入っているかと足す場所を出す。
+        var available = WindowsOcrEngine.AvailableLanguages;
+        OcrLanguageNote.Text = available.Count == 0
+            ? "高速モードに使える言語が 1 つも入っていません。下のボタンから追加してください。"
+            : $"高速モードで読める言語: {string.Join(" / ", available)}"
+                + "（原文の言語が無ければ、下のボタンから追加してください）";
+
+        OcrEngineStateText.Text = $"{_ocrEngine.Name}"
+            + (_ocrEngine.ProvidesConfidence ? string.Empty : " — 確信度を返しません");
+    }
+
+    private void OnOcrEngineChanged(object sender, RoutedEventArgs e)
+    {
+        if (_suppressOcrEngineChange)
+        {
+            return;
+        }
+
+        var choice = ReferenceEquals(sender, OcrWindowsRadio)
+            ? OcrEngineChoice.Windows
+            : OcrEngineChoice.Paddle;
+
+        _ocrOptions = _ocrOptions with { Engine = choice };
+        _ocrOptions.Save();
+
+        // 読み取り結果が変わるため、前の結果は捨てる。
+        // 残したまま翻訳すると、どちらのエンジンの結果か分からなくなる。
+        _lastOcrLines = [];
+        TranslateButton.IsEnabled = false;
+
+        _ocrEngine.Dispose();
+        _ocrEngine = CreateOcrEngine();
+        RefreshOcrEngineState();
+
+        StatusText.Text = choice == OcrEngineChoice.Windows
+            ? "高速モードに切り替えました。読み直すには OCR を実行してください。"
+            : "既定のエンジンに戻しました。読み直すには OCR を実行してください。";
+
+        // FR-OCR-08: 初回の OCR で待たせない。
+        _ = WarmUpOcrAsync();
+    }
+
+    /// <summary>設定どおりのエンジンを作る。</summary>
+    private IOcrEngine CreateOcrEngine() => _ocrOptions.Engine switch
+    {
+        OcrEngineChoice.Windows => new WindowsOcrEngine(_ocrOptions.WindowsLanguage),
+        _ => new PaddleOcrEngine(),
+    };
+
+    /// <summary>
+    /// 言語を追加する設定画面を開く（FR-OCR-10）。
+    /// </summary>
+    /// <remarks>
+    /// <b>こちらでは入れない。</b>言語パックの追加は OS の設定の変更で、
+    /// 管理者権限が要ることもある（RULES.md 🟠「管理者権限を要求しない」）。
+    /// 開くところまでを行い、入れるかどうかは利用者が決める。
+    /// </remarks>
+    private void OnOpenLanguageSettingsClick(object sender, RoutedEventArgs e)
+    {
+        Process.Start(new ProcessStartInfo(WindowsOcrEngine.LanguageSettingsUri)
+        {
+            UseShellExecute = true,
+        })?.Dispose();
+
+        StatusText.Text = "設定を開きました。言語を追加したら Glosslay を再起動してください。";
     }
 
     private void OnWindowClosed(object? sender, EventArgs e) => Dispose();

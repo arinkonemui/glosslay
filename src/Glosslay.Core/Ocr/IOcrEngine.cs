@@ -22,6 +22,20 @@ public interface IOcrEngine : IDisposable
     bool IsReady { get; }
 
     /// <summary>
+    /// <see cref="OcrLine.Confidence"/> に意味のある値を入れられるか。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>Windows の OCR は確信度を持たない</b>（<c>WindowsOcrEngine</c>）。
+    /// 値としては 1.0 が入るが、それは「自信がある」ではなく「分からない」という意味。</para>
+    /// <para><b>画面や計測に出すときは必ずここを見る。</b>
+    /// 1.00 が並んでいるのを「完璧に読めた」と読み違えると、
+    /// エンジンを比べる判断そのものが狂う。</para>
+    /// <para>FR-OCR-06「信頼度が閾値未満の行を破棄」も、
+    /// <c>false</c> のエンジンでは効かない。</para>
+    /// </remarks>
+    bool ProvidesConfidence { get; }
+
+    /// <summary>
     /// モデルを読み込む。
     /// </summary>
     /// <remarks>
