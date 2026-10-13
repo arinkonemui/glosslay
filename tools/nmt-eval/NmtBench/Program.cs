@@ -10,6 +10,7 @@ using Glosslay.Input;
 using Glosslay.Monitoring;
 using Glosslay.Ocr;
 using Glosslay.Profiles;
+using Glosslay.Shell;
 using Glosslay.Translation;
 using Glosslay.Usage;
 
@@ -139,6 +140,13 @@ internal static class Program
         if (args.Contains("--languages", StringComparer.Ordinal))
         {
             return await CheckLanguagesAsync().ConfigureAwait(false);
+        }
+
+        // --tray: タスクトレイ常駐の設定と自動起動の登録（FR-SYS-02）を確かめる。モデルを読まない。
+        // 本物の自動起動は書き換えない（検査用のキーに書いて最後に消す）。
+        if (args.Contains("--tray", StringComparer.Ordinal))
+        {
+            return CheckTray();
         }
 
         // --usage: 使用量の数え方と文面（RULES.md 🟡-8）を確かめる。モデルを読まない。
@@ -547,6 +555,80 @@ internal static class Program
     /// どれも「予期しない課金」を防ぐという目的を裏切る。</para>
     /// <para><b>実物の <c>usage.json</c> は触らない。</b>別のファイル名を渡し、最後に消す。</para>
     /// </remarks>
+    /// <summary>
+    /// タスクトレイ常駐の設定と自動起動の登録を確かめる（FR-SYS-02）。
+    /// </summary>
+    /// <remarks>
+    /// <b>本物の自動起動は書き換えない。</b>登録先は検査用のキー
+    /// （<c>HKEY_CURRENT_USER\Software\Glosslay.BenchTest</c>）で、最後に消す。
+    /// 設定ファイルも書かない（文字列にして読み戻すだけ）。
+    /// </remarks>
+    private static int CheckTray()
+    {
+        var failures = 0;
+
+        void Check(string label, bool ok, string detail = "")
+        {
+            if (!ok)
+            {
+                failures++;
+            }
+
+            Console.WriteLine($"  {(ok ? "  " : "★ ")}{label,-44} {(ok ? "OK" : "NG"),-4}{detail}");
+        }
+
+        Console.WriteLine("=== × の動き（tray.json）===");
+        var defaults = new TrayOptions();
+        Check("既定はトレイにしまう", defaults.CloseBehavior == CloseBehavior.HideToTray);
+        Check("通知はまだ出していない", !defaults.HideNoticeShown);
+
+        var json = JsonSettings.Serialize(defaults with { CloseBehavior = CloseBehavior.Exit });
+        Check("動きは名前で書き出す（手で直せる）", json.Contains("\"Exit\"", StringComparison.Ordinal), $"← {json.ReplaceLineEndings(" ")}");
+        var back = JsonSettings.Deserialize<TrayOptions>(json);
+        Check("読み戻すと同じ", back?.CloseBehavior == CloseBehavior.Exit);
+
+        Console.WriteLine();
+        Console.WriteLine("=== 自動起動（検査用のキーに書く）===");
+        const string testRoot = @"Software\Glosslay.BenchTest";
+        var autoStart = new AutoStart(testRoot + @"\Run", "GlosslayTest");
+        var exe = @"C:\Program Files Example\Glosslay\Glosslay.exe";
+        try
+        {
+            Check("最初は登録されていない", !autoStart.IsEnabled);
+
+            autoStart.Set(true, exe);
+            Check("登録すると入る", autoStart.IsEnabled);
+            Check("いまの実行ファイルを指す", autoStart.PointsTo(exe));
+            Check("別の場所は指さない", !autoStart.PointsTo(@"D:\Other\Glosslay.exe"));
+
+            var command = AutoStart.CommandFor(exe);
+            Check("空白のあるパスを引用符で囲む", command.StartsWith("\"C:\\Program Files Example", StringComparison.Ordinal), $"← {command}");
+            Check("トレイで待機する引数を付ける", command.EndsWith(" " + AutoStart.TrayArgument, StringComparison.Ordinal));
+
+            autoStart.Set(true, exe);
+            Check("2 回入れても 1 つのまま", autoStart.IsEnabled);
+
+            autoStart.Set(false, exe);
+            Check("外すと消える", !autoStart.IsEnabled);
+
+            autoStart.Set(false, exe);
+            Check("無いものを外しても落ちない", !autoStart.IsEnabled);
+        }
+        finally
+        {
+            Microsoft.Win32.Registry.CurrentUser.DeleteSubKeyTree(testRoot, throwOnMissingSubKey: false);
+        }
+
+        using (var leftover = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(testRoot))
+        {
+            Check("検査用のキーを片付けた", leftover is null);
+        }
+
+        Console.WriteLine();
+        Console.WriteLine(failures == 0 ? "すべて期待どおり。" : $"★ {failures} 件が期待と違う。");
+        return failures == 0 ? 0 : 1;
+    }
+
     private static int CheckUsage()
     {
         var failures = 0;

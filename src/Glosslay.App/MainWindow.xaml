@@ -360,6 +360,27 @@
                             </StackPanel>
                         </GroupBox>
 
+                        <!-- FR-SYS-02。× の動きは利用者が選ぶ（2026-10-14 の要望）。 -->
+                        <GroupBox Header="アプリの動作">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="× を押したとき"
+                                           Margin="0,0,0,2" />
+                                <ComboBox x:Name="CloseBehaviorCombo" Width="220" HorizontalAlignment="Left"
+                                          SelectionChanged="OnCloseBehaviorChanged">
+                                    <ComboBoxItem Content="タスクトレイにしまう" Tag="HideToTray" />
+                                    <ComboBoxItem Content="アプリを終了する" Tag="Exit" />
+                                </ComboBox>
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="しまっておくと、この画面を閉じてもホットキーと自動監視が使えます。終了するには、タスクトレイのアイコンを右クリックしてください。" />
+                                <CheckBox x:Name="AutoStartCheck" Margin="0,8,0,2"
+                                          Content="Windows の起動時に自動で起動する"
+                                          Checked="OnAutoStartChanged" Unchecked="OnAutoStartChanged" />
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="起動したときは画面を出さず、タスクトレイで待機します。" />
+                                <TextBlock x:Name="AutoStartNote" Style="{StaticResource Hint}" Visibility="Collapsed" />
+                            </StackPanel>
+                        </GroupBox>
+
                         <!-- 課題1・課題6。書く場所を 1 か所にまとめる（2026-09-21 の要望）。
                              ここに置いたのは、設定を触っている人が必ず通る場所だから。
                              配布ページと操作マニュアル（FR-SYS-11）にも同じ内容を載せる。 -->

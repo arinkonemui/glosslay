@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -18,6 +19,7 @@ using Glosslay.Monitoring;
 using Glosslay.Ocr;
 using Glosslay.Overlay;
 using Glosslay.Profiles;
+using Glosslay.Shell;
 using Glosslay.Translation;
 using Glosslay.Usage;
 
@@ -150,6 +152,35 @@ public partial class MainWindow : Window, IDisposable
     /// <summary>使用量の常駐表示の設定。<b>既定は OFF。</b></summary>
     private UsageOverlayOptions _usageOverlayOptions = UsageOverlayOptions.Load();
 
+    /// <summary>タスクトレイ常駐の設定（FR-SYS-02）。</summary>
+    private TrayOptions _trayOptions = TrayOptions.Load();
+
+    /// <summary>Windows 起動時の自動起動（FR-SYS-02）。状態は Windows の登録が正。</summary>
+    private readonly AutoStart _autoStart = new();
+
+    /// <summary>タスクトレイのアイコン。ウィンドウのハンドルができた時点で作る。</summary>
+    private TrayIcon? _trayIcon;
+
+    /// <summary>
+    /// 本当に終了してよいか。<c>false</c> の間は、× を押してもトレイにしまうだけ（設定による）。
+    /// </summary>
+    private bool _exitRequested;
+
+    /// <summary>自動起動から立ち上がった。画面を出さずにトレイで待機する。</summary>
+    private readonly bool _startInTray =
+        Environment.GetCommandLineArgs().Contains(AutoStart.TrayArgument, StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>設定画面へ値を反映している間、変更の処理を止める。</summary>
+    private bool _isRefreshingTraySettings;
+
+    /// <summary>トレイのアイコンの操作を知らせてもらうメッセージ番号（WM_APP + 1）。</summary>
+    private const uint TrayCallbackMessage = 0x8001;
+
+    // トレイのメニューの項目番号。
+    private const int TrayMenuOpen = 1;
+    private const int TrayMenuAutoWatch = 2;
+    private const int TrayMenuExit = 9;
+
     /// <summary>使用量の常駐表示。使うときだけ作る。</summary>
     private UsageOverlayWindow? _usageOverlay;
 
@@ -263,7 +294,17 @@ public partial class MainWindow : Window, IDisposable
         _profileStore = new ProfileStore(_entitlements);
 
         Loaded += OnLoaded;
+        Closing += OnWindowClosing;
         Closed += OnWindowClosed;
+
+        // 自動起動のときは画面を出さない。Loaded で隠すまでの間も、
+        // 前面を奪わず、タスクバーにも出さない（ゲームを始めている最中かもしれない）。
+        if (_startInTray)
+        {
+            ShowActivated = false;
+            ShowInTaskbar = false;
+            WindowState = WindowState.Minimized;
+        }
     }
 
     /// <summary>
@@ -291,7 +332,37 @@ public partial class MainWindow : Window, IDisposable
     protected override void OnSourceInitialized(EventArgs e)
     {
         base.OnSourceInitialized(e);
+
+        // ホットキーとトレイの両方が、このウィンドウでメッセージを受け取る。
+        var handle = new WindowInteropHelper(this).Handle;
+        _hwndSource = HwndSource.FromHwnd(handle);
+        _hwndSource.AddHook(OnWindowMessage);
+
+        Icon = AppIcon.CreateBitmap(64);
+        StartTrayIcon(handle);
         StartHotkey();
+    }
+
+    /// <summary>
+    /// タスクトレイにアイコンを出す（FR-SYS-02）。
+    /// </summary>
+    /// <remarks>
+    /// <b>出せなくてもアプリは動かす。</b>エクスプローラーが動いていない等で出せないときは、
+    /// × で隠さずに終了する（隠すと戻る手段が無くなる。<see cref="OnWindowClosing"/>）。
+    /// </remarks>
+    private void StartTrayIcon(nint handle)
+    {
+        try
+        {
+            _trayIcon = new TrayIcon(
+                handle, TrayCallbackMessage, AppIcon.CreatePng(TrayIcon.PreferredSize), "Glosslay");
+            _trayIcon.Show();
+        }
+        catch (InvalidOperationException)
+        {
+            _trayIcon?.Dispose();
+            _trayIcon = null;
+        }
     }
 
 private void StartHotkey()
@@ -308,11 +379,7 @@ private void StartHotkey()
         }
 
         trigger.Fired += OnTriggerFired;
-
-        var handle = new WindowInteropHelper(this).Handle;
-        _hwndSource = HwndSource.FromHwnd(handle);
-        _hwndSource.AddHook(OnWindowMessage);
-        trigger.Attach(handle);
+        trigger.Attach(new WindowInteropHelper(this).Handle);
 
         HotkeyText.Text = string.Join(
             Environment.NewLine, [.. trigger.Descriptions, .. trigger.Problems]);
@@ -339,6 +406,29 @@ private void StartHotkey()
     /// </remarks>
     private nint OnWindowMessage(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
     {
+        // トレイのアイコン宛て。メニューはこの関数から戻った後で出す
+        // （ウィンドウの処理の途中でメニューの待ち受けに入ると、WPF の処理が入れ子になる）。
+        // もう一度起動された（SingleInstance）。2 つ目は終わるので、こちらが画面を出す。
+        if (msg != 0 && (uint)msg == SingleInstance.ShowMessage)
+        {
+            Dispatcher.BeginInvoke(OpenFromTray);
+            return 0;
+        }
+
+        switch (_trayIcon?.Interpret(msg, wParam, lParam))
+        {
+            case TrayIconEvent.Selected:
+                Dispatcher.BeginInvoke(OpenFromTray);
+                return 0;
+
+            case TrayIconEvent.MenuRequested:
+                Dispatcher.BeginInvoke(ShowTrayMenu);
+                return 0;
+
+            default:
+                break;
+        }
+
         // 判定はトリガー側の仕事。ここはメッセージを渡すだけ。
         // ウィンドウメッセージを要るのはキーボードだけなので、型で絞る。
         // ゲームパッド（Windows.Gaming.Input）に差し替えたときは null になり、何もしないのが正しい。
@@ -1063,6 +1153,14 @@ private void StartHotkey()
             return;
         }
 
+        // 自動起動から立ち上がったなら、ここで隠す（トレイで待機）。
+        // 読み込みや設定の反映はこの後も同じように行う。ホットキーは隠れていても効く。
+        if (_startInTray && _trayIcon is { IsShown: true })
+        {
+            Hide();
+        }
+
+        RefreshTraySettings();
         RefreshTargets();
         SelectTargetLanguage(_translationOptions.TargetLanguage);
         RefreshTranslatorState();
@@ -1235,11 +1333,210 @@ private void StartHotkey()
 
     private void OnWindowClosed(object? sender, EventArgs e) => Dispose();
 
+    // ===== タスクトレイ常駐（FR-SYS-02） =====
+
+    /// <summary>
+    /// × を押したとき。設定が「しまう」ならトレイにしまって動き続ける。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>トレイにアイコンが出ていなければしまわない。</b>しまうと戻る手段が無くなる。</para>
+    /// <para><b>初めてしまったときだけ知らせる。</b>閉じたつもりで動き続けていると驚かせる。</para>
+    /// </remarks>
+    private void OnWindowClosing(object? sender, CancelEventArgs e)
+    {
+        if (_exitRequested
+            || _trayOptions.CloseBehavior == CloseBehavior.Exit
+            || _trayIcon is not { IsShown: true })
+        {
+            return;
+        }
+
+        e.Cancel = true;
+        Hide();
+
+        if (!_trayOptions.HideNoticeShown)
+        {
+            _trayIcon.ShowNotice(
+                "Glosslay はタスクトレイで動いています",
+                "ホットキーはこのまま使えます。終了するには、このアイコンを右クリックしてください。");
+            _trayOptions = _trayOptions with { HideNoticeShown = true };
+            _trayOptions.Save();
+        }
+    }
+
+    /// <summary>本当に終了する（トレイの「終了」）。</summary>
+    public void ExitApplication()
+    {
+        _exitRequested = true;
+        Close();
+    }
+
+    /// <summary>Windows のサインアウト・シャットダウン中。しまわずに閉じさせる。</summary>
+    public void AllowExit() => _exitRequested = true;
+
+    /// <summary>トレイから画面を出す。</summary>
+    private void OpenFromTray()
+    {
+        ShowInTaskbar = true;
+        ShowActivated = true;
+        Show();
+        if (WindowState == WindowState.Minimized)
+        {
+            WindowState = WindowState.Normal;
+        }
+
+        Activate();
+    }
+
+    /// <summary>トレイの右クリックのメニュー。</summary>
+    /// <remarks>
+    /// <b>画面を開かなくても使いたいものだけを置く。</b>ホットキーを覚えていない人のために、
+    /// 割り当てを灰色の説明として並べる（押せない行）。
+    /// </remarks>
+    private void ShowTrayMenu()
+    {
+        if (_trayIcon is null)
+        {
+            return;
+        }
+
+        var items = new List<TrayMenuItem>
+        {
+            new(TrayMenuOpen, "画面を開く") { IsDefault = true },
+            new(TrayMenuAutoWatch, "自動監視") { IsChecked = AutoWatchCheck.IsChecked == true },
+        };
+
+        if (_inputTrigger is RawInputTrigger { IsActive: true } trigger && trigger.Descriptions.Count > 0)
+        {
+            items.Add(TrayMenuItem.Separator);
+            var number = 100;
+            foreach (var description in trigger.Descriptions)
+            {
+                items.Add(new TrayMenuItem(number++, description) { IsEnabled = false });
+            }
+        }
+
+        items.Add(TrayMenuItem.Separator);
+        items.Add(new TrayMenuItem(TrayMenuExit, "終了"));
+
+        switch (_trayIcon.ShowMenu(items))
+        {
+            case TrayMenuOpen:
+                OpenFromTray();
+                break;
+
+            case TrayMenuAutoWatch:
+                ToggleAutoWatchFromTray();
+                break;
+
+            case TrayMenuExit:
+                ExitApplication();
+                break;
+
+            default:
+                break;
+        }
+    }
+
+    /// <summary>
+    /// トレイから自動監視を切り替える。
+    /// </summary>
+    /// <remarks>
+    /// <b>初めて入れるときは画面を出す。</b>FR-MOD-08 の案内は確認の窓で、
+    /// 画面が隠れたままでは読めない（読まずに始めてはいけない。RULES.md 🟡-8）。
+    /// </remarks>
+    private void ToggleAutoWatchFromTray()
+    {
+        var enable = AutoWatchCheck.IsChecked != true;
+        if (enable && !_watchOptions.FirstEnableNoticeShown)
+        {
+            OpenFromTray();
+        }
+
+        AutoWatchCheck.IsChecked = enable;
+    }
+
+    /// <summary>設定画面の「× を押したとき」と「自動起動」を、いまの状態に合わせる。</summary>
+    private void RefreshTraySettings()
+    {
+        _isRefreshingTraySettings = true;
+        try
+        {
+            var behavior = _trayOptions.CloseBehavior.ToString();
+            SelectByTag(CloseBehaviorCombo, behavior, behavior);
+            AutoStartCheck.IsChecked = _autoStart.IsEnabled;
+            ShowAutoStartNote();
+        }
+        finally
+        {
+            _isRefreshingTraySettings = false;
+        }
+    }
+
+    private void OnCloseBehaviorChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isRefreshingTraySettings
+            || !Enum.TryParse<CloseBehavior>(TagOf(CloseBehaviorCombo), out var behavior))
+        {
+            return;
+        }
+
+        _trayOptions = _trayOptions with { CloseBehavior = behavior };
+        _trayOptions.Save();
+        StatusText.Text = behavior == CloseBehavior.HideToTray
+            ? "× を押すとタスクトレイにしまうようにしました。"
+            : "× を押すとアプリを終了するようにしました。";
+    }
+
+    private void OnAutoStartChanged(object sender, RoutedEventArgs e)
+    {
+        if (_isRefreshingTraySettings || Environment.ProcessPath is not { Length: > 0 } path)
+        {
+            return;
+        }
+
+        var enabled = AutoStartCheck.IsChecked == true;
+        try
+        {
+            _autoStart.Set(enabled, path);
+            StatusText.Text = enabled
+                ? "Windows の起動時に自動で起動するようにしました（タスクトレイで待機します）。"
+                : "自動起動をやめました。";
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or IOException)
+        {
+            StatusText.Text = "自動起動の設定を変えられませんでした: " + ex.Message;
+        }
+
+        RefreshTraySettings();
+    }
+
+    /// <summary>
+    /// 自動起動の登録が、いまの実行ファイルとは別の場所を指していれば知らせる。
+    /// </summary>
+    /// <remarks>
+    /// ZIP 版を別のフォルダへ展開し直すと、古い場所を指したまま残る。
+    /// チェックが入っているのに起動しない、という状態を見えるようにする。
+    /// </remarks>
+    private void ShowAutoStartNote()
+    {
+        var stale = _autoStart.IsEnabled
+                    && Environment.ProcessPath is { Length: > 0 } path
+                    && !_autoStart.PointsTo(path);
+
+        AutoStartNote.Text = stale
+            ? "登録されているのは別の場所の Glosslay です。入れ直すと、いま使っているものに切り替わります。"
+            : string.Empty;
+        AutoStartNote.Visibility = stale ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     /// <summary>キャプチャセッションと OCR エンジンを解放する。ウィンドウを閉じたときに呼ぶ。</summary>
     public void Dispose()
     {
         _hwndSource?.RemoveHook(OnWindowMessage);
         _hwndSource = null;
+        _trayIcon?.Dispose();
+        _trayIcon = null;
 
         _watchTimer?.Stop();
         _watchTimer = null;
