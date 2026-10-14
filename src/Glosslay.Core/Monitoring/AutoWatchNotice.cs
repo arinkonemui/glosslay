@@ -78,6 +78,10 @@ public static class AutoWatchNotice
         }
 
         lines.Add("（パソコンの性能や、画面の文字の量で前後します）");
+
+        // FR-MOD-08「処理時間の実測表示を案内する」。ここではぼかし、
+        // 自分の環境での実際の時間は FR-OVL-10 の表示で見てもらう。
+        lines.Add("実際の時間は、設定の「処理時間を画面の隅に出す」で確かめられます。");
         lines.Add(string.Empty);
         lines.Add($"1 時間あたり {options.MaxCallsPerHour.ToString(CultureInfo.CurrentCulture)} 回で"
                   + "自動的に止まります。");

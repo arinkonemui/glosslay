@@ -142,6 +142,12 @@ internal static class Program
             return await CheckLanguagesAsync().ConfigureAwait(false);
         }
 
+        // --timing: 処理時間の実測表示（FR-OVL-10）の数え方と文面を確かめる。モデルを読まない。
+        if (args.Contains("--timing", StringComparer.Ordinal))
+        {
+            return CheckTiming();
+        }
+
         // --tray: タスクトレイ常駐の設定と自動起動の登録（FR-SYS-02）を確かめる。モデルを読まない。
         // 本物の自動起動は書き換えない（検査用のキーに書いて最後に消す）。
         if (args.Contains("--tray", StringComparer.Ordinal))
@@ -629,6 +635,73 @@ internal static class Program
         return failures == 0 ? 0 : 1;
     }
 
+    /// <summary>
+    /// 処理時間の実測表示（FR-OVL-10）の数え方と文面を確かめる。
+    /// </summary>
+    private static int CheckTiming()
+    {
+        var failures = 0;
+
+        void Check(string label, bool ok, string detail = "")
+        {
+            if (!ok)
+            {
+                failures++;
+            }
+
+            Console.WriteLine($"  {(ok ? "  " : "★ ")}{label,-44} {(ok ? "OK" : "NG"),-4}{detail}");
+        }
+
+        static TimeSpan Ms(double value) => TimeSpan.FromMilliseconds(value);
+
+        Console.WriteLine("=== 処理時間の実測表示（FR-OVL-10）===");
+
+        var stats = new ProcessingTimeStats(capacity: 3);
+        Check("まだ無いときはそう言う", stats.OneLine == "処理時間: まだ翻訳していません", $"← {stats.OneLine}");
+
+        stats.Record(Ms(500), Ms(200));
+        stats.Record(Ms(600), Ms(300));
+        stats.Record(Ms(700), Ms(400));
+        Check("読み取りの平均", stats.ReadAverage == Ms(600));
+        Check("読み取りの直近最大", stats.ReadRecentMax == Ms(700));
+        Check("翻訳の平均", stats.TranslationAverage == Ms(300));
+        Check(
+            "承認された形の 1 行",
+            stats.OneLine == "読み取り 平均 600ms / 直近最大 700ms ・ 翻訳 平均 300ms",
+            $"← {stats.OneLine}");
+
+        // 直近だけを見る。起動直後の遅い回が残り続けると、いまの速さが見えない。
+        stats.Record(Ms(100), Ms(100));
+        Check("古い回は外れる（直近 3 回）", stats.ReadCount == 3 && stats.ReadRecentMax == Ms(700));
+        stats.Record(Ms(100), Ms(100));
+        stats.Record(Ms(100), Ms(100));
+        Check("遅い回が外れると最大も下がる", stats.ReadRecentMax == Ms(100));
+
+        // 文字が無く翻訳しなかった回は、翻訳を 0 として数えない（平均が速く見えてしまう）。
+        var noText = new ProcessingTimeStats();
+        noText.Record(Ms(400), Ms(800));
+        noText.Record(Ms(300), translation: null);
+        Check("翻訳しなかった回は翻訳に数えない", noText.TranslationCount == 1 && noText.TranslationAverage == Ms(800));
+        Check("読み取りは数える", noText.ReadCount == 2);
+
+        var readOnly = new ProcessingTimeStats();
+        readOnly.Record(Ms(450), translation: null);
+        Check(
+            "翻訳がまだ無ければ翻訳の欄を出さない",
+            readOnly.OneLine == "読み取り 平均 450ms / 直近最大 450ms",
+            $"← {readOnly.OneLine}");
+
+        var defaults = new UsageOverlayOptions();
+        Check("既定は出さない（録画・配信に映らない）", !defaults.ShowProcessingTime);
+        Check("隅のウィンドウは、どちらかを出すときだけ要る", !defaults.AnyVisible
+              && (defaults with { ShowProcessingTime = true }).AnyVisible
+              && (defaults with { Enabled = true }).AnyVisible);
+
+        Console.WriteLine();
+        Console.WriteLine(failures == 0 ? "すべて期待どおり。" : $"★ {failures} 件が期待と違う。");
+        return failures == 0 ? 0 : 1;
+    }
+
     private static int CheckUsage()
     {
         var failures = 0;
@@ -953,6 +1026,10 @@ internal static class Program
         // 絞っていない人には「絞れば半分以下」が一番効く。絞っている人には邪魔。
         CheckText("絞っていなければ絞る案内を出す", whole.Contains("範囲を絞ると", StringComparison.Ordinal));
         CheckText("絞っていれば出さない", !narrowed.Contains("範囲を絞ると", StringComparison.Ordinal));
+        CheckText(
+            "実測の表示の場所を案内する（FR-MOD-08）",
+            whole.Contains("処理時間を画面の隅に出す", StringComparison.Ordinal)
+            && narrowed.Contains("処理時間を画面の隅に出す", StringComparison.Ordinal));
 
         // 所要時間はぼかして出す（2026-10-13・人間の判断）。内訳や ms は利用者に要らない。
         CheckText("全画面の時間をぼかして出す", whole.Contains("1 秒程度", StringComparison.Ordinal));

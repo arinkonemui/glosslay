@@ -185,6 +185,18 @@ public partial class MainWindow : Window, IDisposable
     private UsageOverlayWindow? _usageOverlay;
 
     /// <summary>
+    /// 翻訳 1 回ごとの時間（FR-OVL-10）。画面の隅に直近の平均と最大を出す。
+    /// </summary>
+    /// <remarks>
+    /// <b>記録するのは本番の経路（ホットキー・カーソル・自動監視・「画面を翻訳」）だけ。</b>
+    /// 「工程ごとに実行する」は動作確認用で、待ち方が違うため混ぜない。
+    /// </remarks>
+    private readonly ProcessingTimeStats _processingTimes = new();
+
+    /// <summary>使用量の 1 行（訳文の隅と常駐表示で同じ文言を使う）。</summary>
+    private string _usageOneLine = string.Empty;
+
+    /// <summary>
     /// 自動呼び出しの残りを見直す間隔。
     /// </summary>
     /// <remarks>
@@ -1179,6 +1191,7 @@ private void StartHotkey()
         // RULES.md 🟡-8: 使用量は起動した時点から見えていること。
         RefreshUsage();
         UsageOverlayCheck.IsChecked = _usageOverlayOptions.Enabled;
+        ProcessingTimeCheck.IsChecked = _usageOverlayOptions.ShowProcessingTime;
         SetUsageOverlay(_usageOverlayOptions.Enabled);
 
         // 自動呼び出しの残りは、翻訳しなくても時間とともに戻る。
@@ -2279,8 +2292,17 @@ private void StartHotkey()
             overlay.UsageNote = oneLine;
         }
 
-        _usageOverlay?.Update(oneLine);
+        _usageOneLine = oneLine;
+        UpdateCornerOverlayText();
     }
+
+    /// <summary>
+    /// 画面の隅の常駐表示の中身を今の値にする。出す設定にしていない行は出さない。
+    /// </summary>
+    private void UpdateCornerOverlayText() =>
+        _usageOverlay?.Update(
+            _usageOverlayOptions.Enabled ? _usageOneLine : null,
+            _usageOverlayOptions.ShowProcessingTime ? _processingTimes.OneLine : null);
 
     /// <summary>
     /// 使用量の常駐表示を出す / 消す（RULES.md 🟡-8）。
@@ -2297,12 +2319,40 @@ private void StartHotkey()
             _usageOverlayOptions.Save();
         }
 
-        if (!enabled)
+        StatusText.Text = "使用量の常駐表示: " + ApplyCornerOverlay(enabled);
+    }
+
+    /// <summary>
+    /// 処理時間の実測を画面の隅に出す / 消す（FR-OVL-10）。
+    /// </summary>
+    /// <remarks>
+    /// <b>既定は OFF</b>（録画・配信に映り込まないように）。使用量と同じ隅に並べる。
+    /// </remarks>
+    private void SetProcessingTimeOverlay(bool enabled)
+    {
+        if (_usageOverlayOptions.ShowProcessingTime != enabled)
+        {
+            _usageOverlayOptions = _usageOverlayOptions with { ShowProcessingTime = enabled };
+            _usageOverlayOptions.Save();
+        }
+
+        StatusText.Text = "処理時間の表示: " + ApplyCornerOverlay(enabled);
+    }
+
+    private void OnProcessingTimeOverlayChanged(object sender, RoutedEventArgs e) =>
+        SetProcessingTimeOverlay(ProcessingTimeCheck.IsChecked == true);
+
+    /// <summary>
+    /// 隅のウィンドウを、出すものがあれば出し、無ければ閉じる。結果を一言で返す。
+    /// </summary>
+    /// <param name="turnedOn">いま入れた操作か（消した操作なら「消しました」と返す）。</param>
+    private string ApplyCornerOverlay(bool turnedOn)
+    {
+        if (!_usageOverlayOptions.AnyVisible)
         {
             _usageOverlay?.Close();
             _usageOverlay = null;
-            StatusText.Text = "使用量の常駐表示: 消しました。";
-            return;
+            return "消しました。";
         }
 
         _usageOverlay ??= new UsageOverlayWindow();
@@ -2310,10 +2360,15 @@ private void StartHotkey()
         _usageOverlay.Apply(_usageOverlayOptions);
         RefreshUsage();
 
+        if (!turnedOn)
+        {
+            return "消しました。";
+        }
+
         // クリックスルーが効いていなければ、ゲームのクリックを奪う。黙って出さない。
-        StatusText.Text = _usageOverlay.StyleState.IsComplete
-            ? "使用量の常駐表示: 画面の隅に出しました（クリックは下へ通ります）。"
-            : "使用量の常駐表示: クリックスルーが効いていません。消すことをおすすめします。";
+        return _usageOverlay.StyleState.IsComplete
+            ? "画面の隅に出しました（クリックは下へ通ります）。"
+            : "クリックスルーが効いていません。消すことをおすすめします。";
     }
 
     private void OnUsageOverlayChanged(object sender, RoutedEventArgs e) =>
@@ -3001,6 +3056,10 @@ private void StartHotkey()
 
             if (lines.Count == 0)
             {
+                // 読み取りだけ数える。翻訳を 0 として数えると、翻訳の平均が実際より速く見える。
+                _processingTimes.Record(ocr.Elapsed, translation: null);
+                UpdateCornerOverlayText();
+
                 overlay.ShowMessage("文字が見つかりませんでした", bounds, frame.Width, frame.Height, keepVisibleFor);
                 StatusText.Text = $"ホットキー: {target.DisplayName} に文字が見つかりませんでした。";
                 return;
@@ -3021,6 +3080,9 @@ private void StartHotkey()
                     _translationCache,
                     _translationOptions.TargetLanguage)
                 .ConfigureAwait(true);
+
+            // FR-OVL-10: かかった時間を覚える。隅の表示は次の RecordUsage で使用量と一緒に更新される。
+            _processingTimes.Record(ocr.Elapsed, translated.Translation.Elapsed);
 
             // RULES.md 🟡-8: 呼んだぶんを数える。訳文を重ねる前に数えて、
             // この翻訳のぶんが訳文の隅にも反映されるようにする。

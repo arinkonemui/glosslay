@@ -328,8 +328,16 @@
                                 <TextBlock Style="{StaticResource Hint}"
                                            Text="訳文は押した瞬間の画面のものです。画面が変わると合わなくなるため、出しっぱなしにはしません。" />
 
+                                <!-- FR-OVL-10。使用量と同じ隅に並べる（2026-10-14・人間の判断）。 -->
+                                <CheckBox x:Name="ProcessingTimeCheck" Margin="0,10,0,2"
+                                          Content="処理時間を画面の隅に出す"
+                                          Checked="OnProcessingTimeOverlayChanged"
+                                          Unchecked="OnProcessingTimeOverlayChanged" />
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="直近 10 回の読み取りと翻訳にかかった時間です。自動監視を入れるかどうかの目安になります。録画や配信に映したくない場合は切ってください。" />
+
                                 <StackPanel Orientation="Horizontal" Margin="0,8,0,2">
-                                    <TextBlock Text="使用量を出す隅" VerticalAlignment="Center" Width="110" />
+                                    <TextBlock Text="常駐表示の隅" VerticalAlignment="Center" Width="110" />
                                     <ComboBox x:Name="UsageCornerCombo" Width="90"
                                               SelectionChanged="OnUsageCornerChanged">
                                         <ComboBoxItem Content="左上" Tag="TopLeft" />
@@ -339,7 +347,7 @@
                                     </ComboBox>
                                 </StackPanel>
                                 <TextBlock Style="{StaticResource Hint}"
-                                           Text="「メイン」で常駐表示を入れている場合の位置です。" />
+                                           Text="使用量（「メイン」で入れた場合）と処理時間を、この隅に並べて出します。ゲームの表示と重なる場合は変えてください。" />
                             </StackPanel>
                         </GroupBox>
 

@@ -6,7 +6,7 @@ using Glosslay.Usage;
 namespace Glosslay;
 
 /// <summary>
-/// 使用量を画面の隅に出しっぱなしにする小さなウィンドウ（RULES.md 🟡-8）。
+/// 使用量と処理時間を画面の隅に出しっぱなしにする小さなウィンドウ（RULES.md 🟡-8 / FR-OVL-10）。
 /// </summary>
 /// <remarks>
 /// <para><b>既定では使わない。</b>出しっぱなしの表示は「モニタが1枚でも邪魔されずに遊べる」
@@ -49,6 +49,7 @@ public partial class UsageOverlayWindow : Window
 
         _options = options;
         UsageText.FontSize = options.FontSize;
+        TimingText.FontSize = options.FontSize;
         Opacity = options.Opacity;
 
         // 文字の大きさで寸法が変わるため、位置は測り直した後に決める。
@@ -56,10 +57,17 @@ public partial class UsageOverlayWindow : Window
         MoveToCorner();
     }
 
-    /// <summary>出す文言を差し替える。</summary>
-    public void Update(string text)
+    /// <summary>
+    /// 出す文言を差し替える。<c>null</c> の行は出さない。
+    /// </summary>
+    /// <param name="usage">使用量の 1 行。</param>
+    /// <param name="timing">処理時間の 1 行。</param>
+    public void Update(string? usage, string? timing)
     {
-        UsageText.Text = text;
+        UsageText.Text = usage ?? string.Empty;
+        UsageText.Visibility = usage is null ? Visibility.Collapsed : Visibility.Visible;
+        TimingText.Text = timing ?? string.Empty;
+        TimingText.Visibility = timing is null ? Visibility.Collapsed : Visibility.Visible;
 
         // 文字数で幅が変わる。隅に寄せ直さないと、右寄せのときに縁からはみ出す。
         UpdateLayout();

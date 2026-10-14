@@ -35,8 +35,21 @@ public sealed record UsageOverlayOptions
     /// <summary>設定ファイル名。</summary>
     public const string FileName = "usageoverlay.json";
 
-    /// <summary>常駐表示を出すか。<b>既定は OFF。</b></summary>
+    /// <summary>使用量の常駐表示を出すか。<b>既定は OFF。</b></summary>
     public bool Enabled { get; init; }
+
+    /// <summary>
+    /// 処理時間の実測を出すか（FR-OVL-10）。<b>既定は OFF。</b>
+    /// </summary>
+    /// <remarks>
+    /// <para><b>使用量と同じ隅に並べる</b>（2026-10-14・人間の判断）。隅は 1 つの設定
+    /// （<see cref="Corner"/>）で両方に効く。別々の隅にすると、画面の隅が 2 か所ふさがる。</para>
+    /// <para>FR-OVL-10「既定は非表示、トグル可、小サイズ」。録画・配信に映り込まないよう既定では出さない。</para>
+    /// </remarks>
+    public bool ShowProcessingTime { get; init; }
+
+    /// <summary>使用量か処理時間のどちらかを出すか（隅のウィンドウが要るか）。</summary>
+    public bool AnyVisible => Enabled || ShowProcessingTime;
 
     /// <summary>
     /// 出す隅。
@@ -44,6 +57,7 @@ public sealed record UsageOverlayOptions
     /// <remarks>
     /// <b>右上を既定にする。</b>ゲームの体力・弾数などは左上と下辺に置かれることが多く、
     /// 右上が最も当たりにくい。合わなければ変えられる。
+    /// <b>使用量と処理時間の両方に効く</b>（ゲームによって邪魔にならない場所が違うため、四隅から選べる）。
     /// </remarks>
     public OverlayCorner Corner { get; init; } = OverlayCorner.TopRight;
 
