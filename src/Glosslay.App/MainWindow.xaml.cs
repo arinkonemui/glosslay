@@ -2640,7 +2640,7 @@ private void StartHotkey()
     /// 選んだ言語で訳せるのかを、翻訳を試す前に出す。
     /// </summary>
     /// <remarks>
-    /// <para><b>日本語以外は同梱のモデルでは訳せない</b>（FR-TRN-03。v1.0 は en-ja のみ）。
+    /// <para><b>訳先ごとに、同梱のモデルで訳せる原文が違う</b>（FR-TRN-03。日本語へは英・中、英語へは中だけ）。
     /// 訳してみて初めて「対応していません」と出るのでは遅い。
     /// <b>選んだ時点で分かる</b>ようにする。</para>
     /// <para>「ローカルのみ」を選んでいる場合は、キーがあっても使われないため別に断る。</para>
@@ -2648,9 +2648,12 @@ private void StartHotkey()
     private void UpdateTargetLanguageNote()
     {
         var tag = SelectedTargetLanguage;
-        if (TargetLanguages.LocalSupports(tag))
+        if (TargetLanguages.Find(tag) is { LocalSupported: true } local)
         {
-            TargetLanguageNote.Text = "APIキーが無くても訳せます。translation.json に保存します。";
+            // 訳せる原文を言う。英語を選んだ人に、日本語の原文も訳せると思わせない。
+            TargetLanguageNote.Text =
+                $"{local.LocalSources}の原文は、APIキーが無くても訳せます。"
+                + "それ以外の原文はクラウド翻訳を使います。translation.json に保存します。";
             return;
         }
 

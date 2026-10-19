@@ -142,7 +142,9 @@ public sealed class MarianTokenizer
         var builder = new StringBuilder();
         foreach (var id in ids)
         {
-            if (id == EndOfSequenceId || id == PadId || id < 0 || id >= _toPiece.Length)
+            // <unk> も出さない。訳文に「<unk>」の文字がそのまま重なっていた（2026-10-19、Elin のヘルプ画面）。
+            // Python 側（skip_special_tokens）も落としており、揃える。
+            if (id == EndOfSequenceId || id == PadId || id == UnknownId || id < 0 || id >= _toPiece.Length)
             {
                 continue;
             }

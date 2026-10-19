@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using Microsoft.ML.OnnxRuntime;
-using Microsoft.ML.OnnxRuntime.Tensors;
 
 namespace Glosslay.Translation;
 
@@ -12,15 +10,13 @@ namespace Glosslay.Translation;
 /// 「精度を上げたい人向けの任意のアップグレード」であって、こちらが既定。
 /// 2026-09-27 に Gemini が 60 秒応答せず翻訳が何も出ない事象が起きており、
 /// FR-TRN-06 のフォールバック先としても要る。</para>
-/// <para><b>対応は英→日のみ</b>（2026-09-27 の承認済みの例外。RULES.md 🟡-1）。
-/// 中国語の原文はクラウド翻訳が要る。</para>
-///
-/// <para>モデルは Marian（Opus-MT 系）の seq2seq を ONNX int8 にしたもの。
-/// 3 つのグラフに分かれている。</para>
+/// <para><b>訳せる組み合わせ</b>（経路は <see cref="LocalNmtRoutes"/>）。</para>
 /// <list type="table">
-///   <item><term><c>encoder_model</c></term><description>原文 → 中間表現。1 回だけ</description></item>
-///   <item><term><c>decoder_model</c></term><description>1 手目。過去の状態を持たない</description></item>
-///   <item><term><c>decoder_with_past_model</c></term><description>2 手目以降。前の手の状態を受け取る</description></item>
+///   <item><term>英→日</term><description>既定のモデル（<c>elan-mt-bt-en-ja</c>）。起動時に読む</description></item>
+///   <item><term>中→英</term><description>2026-10-19 追加（<c>opus-mt-zh-en</c>）。<b>初めて中国語を訳すときに読む</b>
+///     （中国語を訳さない人のメモリを増やさない）</description></item>
+///   <item><term>中→日</term><description>中→英→日の 2 段。直接訳せるモデルで使えるものが無いため。
+///     時間は英→日のおよそ 2.3 倍（PLAN.md「中→日の手段を探し直した」）</description></item>
 /// </list>
 /// <para><b>行は 1 件ずつ、並べて訳す。</b>まとめて 1 回で流すと訳文が同じ画面の他の行に
 /// 左右される（<see cref="LocalNmtOptions.BatchLines"/>）。1 件ずつなら行どうしが影響しないため、
@@ -37,12 +33,10 @@ public sealed class LocalNmtTranslator : ITranslator
 {
     private readonly LocalNmtOptions _options;
     private readonly SemaphoreSlim _initializationLock = new(1, 1);
+    private readonly SemaphoreSlim _chineseLock = new(1, 1);
 
-    private InferenceSession? _encoder;
-    private InferenceSession? _decoder;
-    private InferenceSession? _decoderWithPast;
-    private MarianTokenizer? _tokenizer;
-    private string[] _pastInputNames = [];
+    private MarianModel? _englishToJapanese;
+    private MarianModel? _chineseToEnglish;
     private bool _disposed;
 
     public LocalNmtTranslator(LocalNmtOptions? options = null) =>
@@ -52,8 +46,14 @@ public sealed class LocalNmtTranslator : ITranslator
     public string Name => $"ローカルNMT ({_options.ModelName})";
 
     /// <inheritdoc />
-    /// <remarks>キーではなく<b>モデルが置いてあるか</b>を見る。</remarks>
+    /// <remarks>
+    /// キーではなく<b>既定のモデル（英→日）が置いてあるか</b>を見る。
+    /// 中→英は無くても動く（中国語の行を訳さないだけ）ため、ここでは問わない。
+    /// </remarks>
     public bool IsConfigured => _options.RequiredFiles().All(File.Exists);
+
+    /// <summary>中→英のモデルが置いてあるか。</summary>
+    public bool HasChineseModel => _options.ChineseRequiredFiles().All(File.Exists);
 
     /// <inheritdoc />
     /// <remarks>
@@ -61,11 +61,11 @@ public sealed class LocalNmtTranslator : ITranslator
     /// </remarks>
     public bool TranslatesLineByLine => true;
 
-    /// <summary>読み込み済みか。</summary>
-    public bool IsReady => _encoder is not null;
+    /// <summary>既定のモデル（英→日）を読み込み済みか。</summary>
+    public bool IsReady => _englishToJapanese is not null;
 
     /// <summary>
-    /// モデルを先に読み込む。
+    /// 既定のモデル（英→日）を先に読み込む。
     /// </summary>
     /// <remarks>
     /// 146MB を読むため数百 ms かかる。<b>最初の翻訳で待たせない</b>よう、
@@ -85,7 +85,9 @@ public sealed class LocalNmtTranslator : ITranslator
         {
             if (!IsReady)
             {
-                await Task.Run(LoadModels, cancellationToken).ConfigureAwait(false);
+                _englishToJapanese = await Task
+                    .Run(() => MarianModel.Load(_options.ModelDirectory, _options), cancellationToken)
+                    .ConfigureAwait(false);
             }
         }
         finally
@@ -108,71 +110,127 @@ public sealed class LocalNmtTranslator : ITranslator
             return new TranslationResult(string.Empty, TranslationOutcome.Succeeded, stopwatch.Elapsed);
         }
 
-        // 同梱のモデルは英→日のみ（FR-TRN-03）。指定された言語を見ずに訳すと、
-        // 英語を選んでいるのに日本語が出て、しかも「成功」として返ってしまう。
+        // 同梱のモデルで訳せる訳先は日本語と英語だけ（FR-TRN-03）。指定された言語を見ずに訳すと、
+        // 韓国語を選んでいるのに日本語が出て、しかも「成功」として返ってしまう。
         // モデルの有無より先に見る。モデルを置いても、この言語は訳せない。
         if (!TargetLanguages.LocalSupports(request.TargetLanguage))
         {
             return TranslationResult.Failure(
                 TranslationOutcome.Unsupported,
-                $"同梱の翻訳モデルは{TargetLanguages.DisplayNameOf(TargetLanguages.Default)}へのみ対応しています。"
-                + $"{TargetLanguages.DisplayNameOf(request.TargetLanguage)}へ訳すには"
-                + "クラウド翻訳のAPIキーが必要です。",
-                stopwatch.Elapsed);
-        }
-
-        var missing = _options.RequiredFiles().Where(p => !File.Exists(p)).ToList();
-        if (missing.Count > 0)
-        {
-            return TranslationResult.Failure(
-                TranslationOutcome.NotConfigured,
-                $"翻訳モデルが見つかりません: {Path.GetFileName(missing[0])}"
-                + $"（{_options.ModelDirectory}）。モデル一式を配置してください。",
+                $"{TargetLanguages.DisplayNameOf(request.TargetLanguage)}へ訳すには"
+                + "クラウド翻訳のAPIキーが必要です（同梱の翻訳モデルは日本語と英語へのみ対応しています）。",
                 stopwatch.Elapsed);
         }
 
         var lines = request.Text.ReplaceLineEndings("\n").Split('\n');
+        var routes = LocalNmtRoutes.Plan(lines, request.TargetLanguage);
+
+        // 中→英のモデルが無ければ、中国語の行は訳さない（原文のまま返す）。
+        var chineseWanted = routes.Any(IsChinese);
+        if (chineseWanted && !HasChineseModel)
+        {
+            for (var i = 0; i < routes.Length; i++)
+            {
+                if (IsChinese(routes[i]))
+                {
+                    routes[i] = LocalNmtRoute.None;
+                }
+            }
+        }
 
         // 訳せる行が 1 つも無いなら、モデルを起こさずに理由を返す。
-        if (!lines.Any(l => !string.IsNullOrWhiteSpace(l) && Scripts.IsLatinText(l)))
+        if (routes.All(r => r == LocalNmtRoute.None))
         {
             return TranslationResult.Failure(
                 TranslationOutcome.Unsupported,
-                "同梱の翻訳モデルは英語→日本語のみに対応しています。"
-                + " 中国語などを訳すにはクラウド翻訳のAPIキーが必要です。",
+                WhyNothingToTranslate(request.TargetLanguage, chineseWanted),
                 stopwatch.Elapsed);
         }
 
-        await InitializeAsync(cancellationToken).ConfigureAwait(false);
+        // 英→日のモデルは、英→日と中→英→日の 2 段目で要る。
+        if (routes.Any(r => r is LocalNmtRoute.EnglishToJapanese or LocalNmtRoute.ChineseToJapanese))
+        {
+            var missing = _options.RequiredFiles().Where(p => !File.Exists(p)).ToList();
+            if (missing.Count > 0)
+            {
+                return TranslationResult.Failure(
+                    TranslationOutcome.NotConfigured,
+                    $"翻訳モデルが見つかりません: {Path.GetFileName(missing[0])}"
+                    + $"（{_options.ModelDirectory}）。モデル一式を配置してください。",
+                    stopwatch.Elapsed);
+            }
 
-        var translated = await Task.Run(() => TranslateLines(lines, cancellationToken), cancellationToken)
+            await InitializeAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        if (routes.Any(IsChinese))
+        {
+            await EnsureChineseModelAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        var translated = await Task.Run(() => TranslateLines(lines, routes, cancellationToken), cancellationToken)
                                    .ConfigureAwait(false);
 
         return new TranslationResult(
             string.Join('\n', translated), TranslationOutcome.Succeeded, stopwatch.Elapsed);
     }
 
+    /// <summary>訳せる行が無かったときの理由。何をすれば訳せるかまで言う。</summary>
+    private static string WhyNothingToTranslate(string targetLanguage, bool chineseWithoutModel)
+    {
+        if (chineseWithoutModel)
+        {
+            return "中国語を訳す翻訳モデル（中→英）が入っていません。"
+                   + "モデルを入れるか、クラウド翻訳のAPIキーを登録してください。";
+        }
+
+        return string.Equals(targetLanguage, "en", StringComparison.OrdinalIgnoreCase)
+            ? "同梱の翻訳モデルで英語へ訳せるのは中国語の原文だけです。"
+              + "日本語などを英語へ訳すにはクラウド翻訳のAPIキーが必要です。"
+            : "同梱の翻訳モデルで日本語へ訳せるのは英語と中国語の原文だけです。"
+              + "そのほかの言語を訳すにはクラウド翻訳のAPIキーが必要です。";
+    }
+
+    private static bool IsChinese(LocalNmtRoute route) =>
+        route is LocalNmtRoute.ChineseToEnglish or LocalNmtRoute.ChineseToJapanese;
+
+    /// <summary>中→英のモデルを、初めて要ったときに読む。</summary>
+    private async Task EnsureChineseModelAsync(CancellationToken cancellationToken)
+    {
+        if (_chineseToEnglish is not null)
+        {
+            return;
+        }
+
+        await _chineseLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            _chineseToEnglish ??= await Task
+                .Run(() => MarianModel.Load(_options.ChineseModelDirectory, _options), cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            _chineseLock.Release();
+        }
+    }
+
     /// <summary>
     /// 行ごとに訳す。<b>入力と同じ本数を返す</b>（<see cref="TranslatesLineByLine"/> の約束）。
+    /// 訳さない行は原文のまま返す。呼び出し側は「原文と同じ」として重ねない
+    /// （LineTranslation の Unchanged）。
     /// </summary>
-    private string[] TranslateLines(string[] lines, CancellationToken cancellationToken)
+    private string[] TranslateLines(string[] lines, LocalNmtRoute[] routes, CancellationToken cancellationToken)
     {
         var output = new string[lines.Length];
-
-        // 空行はモデルに渡さない。訳す中身が無く、バッチの長さだけ伸ばす。
         var targets = new List<int>(lines.Length);
         for (var i = 0; i < lines.Length; i++)
         {
-            if (string.IsNullOrWhiteSpace(lines[i]))
+            if (routes[i] == LocalNmtRoute.None)
             {
-                output[i] = string.Empty;
-            }
-            else if (!Scripts.IsLatinText(lines[i]))
-            {
-                // 英→日のモデルに中国語・日本語を入れると、流暢な出鱈目が出る。
-                // 訳さず原文のまま返す。呼び出し側は「原文と同じ」として重ねない
-                // （LineTranslation の Unchanged）。RULES.md 🟡-1 の承認済みの例外。
-                output[i] = lines[i];
+                // 空行・訳さない行。英→日のモデルに中国語・日本語を入れると流暢な出鱈目が出るため、
+                // 経路の無い行は決してモデルに渡さない。
+                output[i] = string.IsNullOrWhiteSpace(lines[i]) ? string.Empty : lines[i];
             }
             else
             {
@@ -187,10 +245,20 @@ public sealed class LocalNmtTranslator : ITranslator
 
         if (_options.BatchLines)
         {
-            var translated = Translate([.. targets.Select(i => lines[i])], cancellationToken);
-            for (var n = 0; n < targets.Count; n++)
+            // まとめて流すのは英→日の行だけ（中国語は文に区切って 1 文ずつ訳すため、まとめない）。
+            var english = targets.Where(i => routes[i] == LocalNmtRoute.EnglishToJapanese).ToList();
+            if (english.Count > 0)
             {
-                output[targets[n]] = translated[n];
+                var batch = _englishToJapanese!.Translate([.. english.Select(i => lines[i])], cancellationToken);
+                for (var n = 0; n < english.Count; n++)
+                {
+                    output[english[n]] = batch[n];
+                }
+            }
+
+            foreach (var index in targets.Where(i => routes[i] != LocalNmtRoute.EnglishToJapanese))
+            {
+                output[index] = TranslateOne(lines[index], routes[index], cancellationToken);
             }
 
             return output;
@@ -198,18 +266,84 @@ public sealed class LocalNmtTranslator : ITranslator
 
         // 既定は 1 件ずつ。詰め物が無いぶん、同じ原文がいつも同じ訳になる
         // （LocalNmtOptions.BatchLines に実測と理由）。
-        // 行どうしが影響しないので、並べても訳文は変わらない。
+        // 行どうし・文どうしが影響しないので、並べても訳文は変わらない。
+        //
+        // 1 巡目: 英→日の行と、中国語を区切った「文」を同じ列に並べて訳す。
+        // 中国語は長い段落の行に仕事が偏るため、行ではなく文の単位で並べる（2026-10-19）。
+        // 2 巡目: 中→英→日の 2 段目（1 巡目で揃った英語を英→日へ）。
+        var englishLines = targets.Where(i => routes[i] == LocalNmtRoute.EnglishToJapanese).ToList();
+        var chinese = targets.Where(i => IsChinese(routes[i])).ToList();
+        var sentences = chinese
+            .SelectMany(i => LocalNmtRoutes.SplitChineseSentences(lines[i]).Select(s => (Line: i, Text: s)))
+            .ToList();
+        var englishOfSentence = new string[sentences.Count];
+
+        RunInParallel(englishLines.Count + sentences.Count, n =>
+        {
+            if (n < englishLines.Count)
+            {
+                output[englishLines[n]] = _englishToJapanese!.Translate([lines[englishLines[n]]], cancellationToken)[0];
+                return;
+            }
+
+            var k = n - englishLines.Count;
+            englishOfSentence[k] = _chineseToEnglish!.Translate([sentences[k].Text], cancellationToken)[0].Trim();
+        }, cancellationToken);
+
+        // 中→英の結果を行ごとに組み直す。空なら原文のまま返す（2 段目へ空を渡すとモデルが例外を投げる。
+        // 2026-10-19、鬼谷八荒の会話の画面で実際に起きた）。
+        var secondStage = new List<(int Line, string English)>();
+        foreach (var index in chinese)
+        {
+            var joined = string.Join(
+                ' ',
+                sentences.Select((s, k) => (s.Line, Text: englishOfSentence[k]))
+                         .Where(s => s.Line == index && s.Text.Length > 0)
+                         .Select(s => s.Text));
+
+            if (string.IsNullOrWhiteSpace(joined))
+            {
+                output[index] = lines[index];
+            }
+            else if (routes[index] == LocalNmtRoute.ChineseToEnglish)
+            {
+                output[index] = joined;
+            }
+            else
+            {
+                secondStage.Add((index, joined));
+            }
+        }
+
+        RunInParallel(secondStage.Count, n =>
+            output[secondStage[n].Line] =
+                _englishToJapanese!.Translate([secondStage[n].English], cancellationToken)[0],
+            cancellationToken);
+
+        return output;
+    }
+
+    /// <summary>
+    /// <paramref name="count"/> 件の仕事を、CPU の上限（<see cref="LocalNmtOptions.CpuThreads"/>）まで並べて行う。
+    /// </summary>
+    private void RunInParallel(int count, Action<int> work, CancellationToken cancellationToken)
+    {
+        if (count == 0)
+        {
+            return;
+        }
+
         try
         {
             Parallel.For(
                 0,
-                targets.Count,
+                count,
                 new ParallelOptions
                 {
                     MaxDegreeOfParallelism = _options.CpuThreads,
                     CancellationToken = cancellationToken,
                 },
-                n => output[targets[n]] = Translate([lines[targets[n]]], cancellationToken)[0]);
+                work);
         }
         catch (AggregateException ex) when (ex.InnerExceptions.All(e => e is OperationCanceledException))
         {
@@ -217,217 +351,52 @@ public sealed class LocalNmtTranslator : ITranslator
             cancellationToken.ThrowIfCancellationRequested();
             throw;
         }
-
-        return output;
     }
 
-    /// <summary>まとめて 1 回の推論で訳す。</summary>
-    private string[] Translate(IReadOnlyList<string> texts, CancellationToken cancellationToken)
+    /// <summary>1 行を経路どおりに訳す。</summary>
+    /// <remarks>
+    /// <b>中→英の結果が空なら、原文のまま返す</b>（訳さない行と同じ扱い）。
+    /// 空のまま 2 段目へ渡すとモデルが例外を投げ、画面全体の翻訳が止まる
+    /// （2026-10-19、鬼谷八荒の会話の画面で実際に起きた）。
+    /// </remarks>
+    private string TranslateOne(string line, LocalNmtRoute route, CancellationToken cancellationToken)
     {
-        var tokenizer = _tokenizer!;
-        var batch = texts.Count;
-
-        var encoded = new int[batch][];
-        for (var b = 0; b < batch; b++)
+        switch (route)
         {
-            encoded[b] = tokenizer.Encode(texts[b], _options.MaxInputTokens);
-        }
+            case LocalNmtRoute.EnglishToJapanese:
+                return _englishToJapanese!.Translate([line], cancellationToken)[0];
 
-        var sourceLength = encoded.Max(e => e.Length);
-
-        // 短い行は <pad> で埋め、注意マスクを 0 にして無視させる。
-        var inputIds = new long[batch * sourceLength];
-        var attentionMask = new long[batch * sourceLength];
-        for (var b = 0; b < batch; b++)
-        {
-            for (var i = 0; i < sourceLength; i++)
+            case LocalNmtRoute.ChineseToEnglish:
             {
-                var inside = i < encoded[b].Length;
-                inputIds[(b * sourceLength) + i] = inside ? encoded[b][i] : tokenizer.PadId;
-                attentionMask[(b * sourceLength) + i] = inside ? 1 : 0;
+                var english = ChineseToEnglish(line, cancellationToken);
+                return string.IsNullOrWhiteSpace(english) ? line : english;
             }
-        }
 
-        var maskTensor = new DenseTensor<long>(attentionMask, [batch, sourceLength]);
-
-        using var encoderResults = _encoder!.Run(
-        [
-            NamedOnnxValue.CreateFromTensor("input_ids",
-                new DenseTensor<long>(inputIds, [batch, sourceLength])),
-            NamedOnnxValue.CreateFromTensor("attention_mask", maskTensor),
-        ]);
-
-        cancellationToken.ThrowIfCancellationRequested();
-
-        // 復号の開始記号。Marian は <pad> を使う（generation_config の decoder_start_token_id）。
-        var step = new long[batch];
-        Array.Fill(step, tokenizer.PadId);
-
-        using var first = _decoder!.Run(
-        [
-            NamedOnnxValue.CreateFromTensor("encoder_attention_mask", maskTensor),
-            NamedOnnxValue.CreateFromTensor("input_ids", new DenseTensor<long>(step, [batch, 1])),
-            NamedOnnxValue.CreateFromTensor("encoder_hidden_states", encoderResults[0].AsTensor<float>()),
-        ]);
-
-        // 符号器側の状態は毎手同じ。1 手目のものを使い回す（だから first を持ち続ける）。
-        var fromFirst = first.ToDictionary(v => v.Name, StringComparer.Ordinal);
-        var latest = fromFirst;
-
-        var results = new List<int>[batch];
-        var finished = new bool[batch];
-        for (var b = 0; b < batch; b++)
-        {
-            results[b] = [];
-        }
-
-        IDisposableReadOnlyCollection<DisposableNamedOnnxValue>? previous = null;
-        try
-        {
-            var limit = Math.Min(
-                _options.MaxOutputTokens,
-                (int)(sourceLength * _options.MaxOutputRatio) + 8);
-
-            for (var t = 0; t < limit; t++)
+            case LocalNmtRoute.ChineseToJapanese:
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                if (!PickNext(latest["logits"], batch, tokenizer, results, finished, step))
-                {
-                    break;
-                }
-
-                var inputs = new List<NamedOnnxValue>(_pastInputNames.Length + 2)
-                {
-                    NamedOnnxValue.CreateFromTensor("encoder_attention_mask", maskTensor),
-                    NamedOnnxValue.CreateFromTensor("input_ids", new DenseTensor<long>(step, [batch, 1])),
-                };
-
-                foreach (var name in _pastInputNames)
-                {
-                    var source = name.Contains(".encoder.", StringComparison.Ordinal) ? fromFirst : latest;
-                    inputs.Add(NamedOnnxValue.CreateFromTensor(
-                        name, source[PresentNameOf(name)].AsTensor<float>()));
-                }
-
-                var next = _decoderWithPast!.Run(inputs);
-                previous?.Dispose();
-                previous = next;
-                latest = next.ToDictionary(v => v.Name, StringComparer.Ordinal);
+                var english = ChineseToEnglish(line, cancellationToken);
+                return string.IsNullOrWhiteSpace(english)
+                    ? line
+                    : _englishToJapanese!.Translate([english], cancellationToken)[0];
             }
-        }
-        finally
-        {
-            previous?.Dispose();
-        }
 
-        return [.. results.Select(tokenizer.Decode)];
+            default:
+                return line;
+        }
     }
 
     /// <summary>
-    /// 各行の次の 1 語を選ぶ。まだ続きがあるなら <c>true</c>。
+    /// 中→英。<b>句点で区切って 1 文ずつ訳す</b>（区切らないと途中の文を丸ごと落とす）。
     /// </summary>
     /// <remarks>
-    /// <para>貪欲探索。<c>&lt;pad&gt;</c> は出力してはいけない語として除く
-    /// （モデルの <c>bad_words_ids</c>）。</para>
-    /// <para>終わった行にも <c>&lt;pad&gt;</c> を入れて形を揃える。出力は読まない。</para>
+    /// 文ごとに別々に流す。まとめて 1 回で流すと短い文が詰め物で埋められ、
+    /// 訳が変わる（<see cref="LocalNmtOptions.BatchLines"/> と同じ理由）。
     /// </remarks>
-    private static bool PickNext(
-        DisposableNamedOnnxValue logitsValue, int batch, MarianTokenizer tokenizer,
-        List<int>[] results, bool[] finished, long[] step)
-    {
-        var logits = AsSpan(logitsValue);
-        var vocabulary = tokenizer.VocabularySize;
-
-        // 出力は [batch, 1, vocabulary]。
-        var remaining = false;
-        for (var b = 0; b < batch; b++)
-        {
-            if (finished[b])
-            {
-                step[b] = tokenizer.PadId;
-                continue;
-            }
-
-            var row = logits.Slice(b * vocabulary, vocabulary);
-            var best = -1;
-            var bestScore = float.NegativeInfinity;
-            for (var v = 0; v < vocabulary; v++)
-            {
-                if (v != tokenizer.PadId && row[v] > bestScore)
-                {
-                    bestScore = row[v];
-                    best = v;
-                }
-            }
-
-            if (best < 0 || best == tokenizer.EndOfSequenceId)
-            {
-                finished[b] = true;
-                step[b] = tokenizer.PadId;
-                continue;
-            }
-
-            results[b].Add(best);
-            step[b] = best;
-            remaining = true;
-        }
-
-        return remaining;
-    }
-
-    private static ReadOnlySpan<float> AsSpan(DisposableNamedOnnxValue value)
-    {
-        var tensor = value.AsTensor<float>();
-        return tensor is DenseTensor<float> dense ? dense.Buffer.Span : tensor.ToArray();
-    }
-
-    /// <summary><c>past_key_values.0.decoder.key</c> → <c>present.0.decoder.key</c>。</summary>
-    private static string PresentNameOf(string pastInputName) =>
-        string.Concat("present.", pastInputName.AsSpan("past_key_values.".Length));
-
-    private void LoadModels()
-    {
-        var missing = _options.RequiredFiles().FirstOrDefault(p => !File.Exists(p));
-        if (missing is not null)
-        {
-            throw new FileNotFoundException(
-                $"翻訳モデルが見つかりません: {missing}。"
-                + $"モデル一式を {_options.ModelDirectory} に配置してください。",
-                missing);
-        }
-
-        using var sessionOptions = new SessionOptions
-        {
-            // ゲームと CPU を奪い合わない（OCR の FR-OCR-11 と同じ）。
-            // 1 件ずつ訳すときは行を CpuThreads 本並べるので、1 本あたりは 1 スレッド。
-            // 合計は CpuThreads のまま変わらない（クラスの注記に実測）。
-            IntraOpNumThreads = _options.BatchLines ? _options.CpuThreads : 1,
-            InterOpNumThreads = 1,
-            GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
-
-            // GPU 推論は既定で無効（RULES.md 🟠 / FR-OCR-12）。
-            ExecutionMode = ExecutionMode.ORT_SEQUENTIAL,
-        };
-
-        var encoder = new InferenceSession(_options.ResolveEncoder(), sessionOptions);
-        var decoder = new InferenceSession(_options.ResolveDecoder(), sessionOptions);
-        var decoderWithPast = new InferenceSession(_options.ResolveDecoderWithPast(), sessionOptions);
-
-        // 層の数はモデルによって変わる。名前を数え上げて拾う。
-        _pastInputNames =
-        [
-            .. decoderWithPast.InputMetadata.Keys
-                .Where(k => k.StartsWith("past_key_values.", StringComparison.Ordinal)),
-        ];
-
-        _tokenizer = MarianTokenizer.Load(
-            _options.ResolveSentencePiece(), _options.ResolveVocabulary());
-
-        _encoder = encoder;
-        _decoder = decoder;
-        _decoderWithPast = decoderWithPast;
-    }
+    private string ChineseToEnglish(string line, CancellationToken cancellationToken) =>
+        string.Join(
+            ' ',
+            LocalNmtRoutes.SplitChineseSentences(line)
+                .Select(sentence => _chineseToEnglish!.Translate([sentence], cancellationToken)[0].Trim()));
 
     public void Dispose()
     {
@@ -437,9 +406,9 @@ public sealed class LocalNmtTranslator : ITranslator
         }
 
         _disposed = true;
-        _encoder?.Dispose();
-        _decoder?.Dispose();
-        _decoderWithPast?.Dispose();
+        _englishToJapanese?.Dispose();
+        _chineseToEnglish?.Dispose();
         _initializationLock.Dispose();
+        _chineseLock.Dispose();
     }
 }

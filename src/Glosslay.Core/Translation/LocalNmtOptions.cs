@@ -32,6 +32,19 @@ public sealed record LocalNmtOptions
     public string ModelName { get; init; } = "elan-mt-bt-en-ja (int8)";
 
     /// <summary>
+    /// 中→英のモデル一式の置き場所（2026-10-19 追加）。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>中国語の原文を訳すのに使う</b>（訳先が英語なら中→英、日本語なら中→英→日の 1 段目）。
+    /// 中→日を直接訳せるモデルで使えるものが無いため（PLAN.md「中→日の手段を探し直した」）。</para>
+    /// <para><b>無くても動く。</b>置かれていなければ中国語の行は訳さず、理由を返す。
+    /// 中国語のゲームを遊ばない人は持たなくてよい（FR-TRN-03 の組み合わせ単位の取得）。</para>
+    /// <para><c>Helsinki-NLP/opus-mt-zh-en</c>（CC BY 4.0）。帰属表示が要る（<c>tools/nmt-convert/README.md</c>）。</para>
+    /// </remarks>
+    public string ChineseModelDirectory { get; init; } =
+        Path.Combine(AppContext.BaseDirectory, "models", "nmt", "zh-en");
+
+    /// <summary>
     /// 推論スレッド数。
     /// </summary>
     /// <remarks>
@@ -113,13 +126,20 @@ public sealed record LocalNmtOptions
     /// <summary>id の対応表。<b>分割は .spm、id は vocab.json</b>（<c>tools/nmt-convert/README.md</c>）。</summary>
     public string ResolveVocabulary() => Path.Combine(ModelDirectory, "vocab.json");
 
-    /// <summary>必要なファイルの一覧。存在確認とエラーメッセージに使う。</summary>
-    public IEnumerable<string> RequiredFiles()
+    /// <summary>英→日に必要なファイルの一覧。存在確認とエラーメッセージに使う。</summary>
+    public IEnumerable<string> RequiredFiles() => RequiredFilesIn(ModelDirectory);
+
+    /// <summary>中→英に必要なファイルの一覧。</summary>
+    public IEnumerable<string> ChineseRequiredFiles() => RequiredFilesIn(ChineseModelDirectory);
+
+    /// <summary>モデル一式に必要なファイル。組み合わせによらず同じ形。</summary>
+    public static IEnumerable<string> RequiredFilesIn(string directory)
     {
-        yield return ResolveEncoder();
-        yield return ResolveDecoder();
-        yield return ResolveDecoderWithPast();
-        yield return ResolveSentencePiece();
-        yield return ResolveVocabulary();
+        ArgumentException.ThrowIfNullOrEmpty(directory);
+        yield return Path.Combine(directory, "encoder_model.onnx");
+        yield return Path.Combine(directory, "decoder_model.onnx");
+        yield return Path.Combine(directory, "decoder_with_past_model.onnx");
+        yield return Path.Combine(directory, "source.spm");
+        yield return Path.Combine(directory, "vocab.json");
     }
 }

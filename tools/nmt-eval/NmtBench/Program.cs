@@ -115,6 +115,12 @@ internal static class Program
             return 0;
         }
 
+        // --chinese: 中国語をローカルで訳す経路（中→英 / 中→英→日）を実際のモデルで確かめる。
+        if (args.Contains("--chinese", StringComparer.Ordinal))
+        {
+            return await CheckChineseAsync(options).ConfigureAwait(false);
+        }
+
         using var translator = new LocalNmtTranslator(options);
 
         // --selection: 選択の規則を表のまま検査する。翻訳しない。
@@ -504,10 +510,15 @@ internal static class Program
         Console.WriteLine("=== 選択肢（FR-CFG-01）===");
         Check("既定は日本語", TargetLanguages.All[0].Tag == TargetLanguages.Default);
         Check("日本語はキー無しで訳せる", TargetLanguages.LocalSupports("ja"));
+        Check("英語もキー無しで訳せる（中国語の原文だけ）", TargetLanguages.LocalSupports("en"));
         Check(
-            "ローカルで訳せるのは日本語だけ",
-            TargetLanguages.All.Count(o => o.LocalSupported) == 1,
+            "ローカルで訳せる訳先は日本語と英語だけ",
+            TargetLanguages.All.Count(o => o.LocalSupported) == 2,
             $"← 全 {TargetLanguages.All.Count} 件");
+        Check(
+            "英語へ訳せる原文は中国語だけと言う",
+            TargetLanguages.Find("en")?.LocalSources == "中国語",
+            $"← {TargetLanguages.Find("en")?.LocalSources}");
         Check("大小を無視して引ける", TargetLanguages.LocalSupports("JA"));
         Check("知らないタグは訳せない扱い", !TargetLanguages.LocalSupports("de"));
         Check("知らないタグはそのまま表示する", TargetLanguages.DisplayNameOf("de") == "de");
@@ -531,21 +542,73 @@ internal static class Program
             .TranslateAsync(new TranslationRequest("ダメージ") { TargetLanguage = "en" })
             .ConfigureAwait(false);
 
+        var korean = await local
+            .TranslateAsync(new TranslationRequest("Attack Power") { TargetLanguage = "ko" })
+            .ConfigureAwait(false);
+
+        var chineseWithoutModel = await local
+            .TranslateAsync(new TranslationRequest("承让了！") { TargetLanguage = "ja" })
+            .ConfigureAwait(false);
+
         Check(
             "日本語は言語では断らない",
             japanese.Outcome == TranslationOutcome.NotConfigured,
             $"← {japanese.Outcome}（モデルが無いので止まる）");
         Check(
-            "英語はモデルの有無より先に断る",
+            "訳先が韓国語ならモデルの有無より先に断る",
+            korean.Outcome == TranslationOutcome.Unsupported,
+            $"← {korean.Outcome}");
+        Check(
+            "日本語の原文を英語へはローカルでは訳さない",
             english.Outcome == TranslationOutcome.Unsupported,
             $"← {english.Outcome}");
         Check(
             "断る理由を言葉で返す",
             english.Message?.Contains("APIキー", StringComparison.Ordinal) == true,
             $"← {english.Message}");
+        Check(
+            "中→英のモデルが無ければ、そう言って断る",
+            chineseWithoutModel.Outcome == TranslationOutcome.Unsupported
+            && chineseWithoutModel.Message?.Contains("中→英", StringComparison.Ordinal) == true,
+            $"← {chineseWithoutModel.Message}");
 
         // FR-TRN-06: 対応していない言語では切り替えない。切り替えても同じ結果になる。
         Check("対応しない言語では切り替えない", !english.ShouldFallBack);
+
+        Console.WriteLine();
+        Console.WriteLine("=== 行ごとの経路（LocalNmtRoutes・モデルを読まない）===");
+
+        LocalNmtRoute[] Plan(string target, params string[] lines) => LocalNmtRoutes.Plan(lines, target);
+
+        Check("英語 → 日本語は英→日", Plan("ja", "Attack Power")[0] == LocalNmtRoute.EnglishToJapanese);
+        Check("中国語 → 日本語は中→英→日", Plan("ja", "承让了！")[0] == LocalNmtRoute.ChineseToJapanese);
+        Check("中国語 → 英語は中→英", Plan("en", "承让了！")[0] == LocalNmtRoute.ChineseToEnglish);
+        Check("英語 → 英語は訳さない", Plan("en", "Attack Power")[0] == LocalNmtRoute.None);
+        Check("日本語 → 英語はローカルでは訳さない", Plan("en", "ダメージを与える")[0] == LocalNmtRoute.None);
+        Check("日本語 → 日本語は訳さない", Plan("ja", "ダメージを与える")[0] == LocalNmtRoute.None);
+        Check("韓国語は訳さない", Plan("ja", "공격력")[0] == LocalNmtRoute.None);
+        Check(
+            "かなのある画面の漢字だけの行は日本語とみなす",
+            Plan("ja", "設定", "ゲームを始める").All(r => r == LocalNmtRoute.None));
+        Check(
+            "かなの無い画面の漢字だけの行は中国語とみなす",
+            Plan("ja", "系统设置", "人物预设").All(r => r == LocalNmtRoute.ChineseToJapanese));
+        Check("空行は訳さない", Plan("ja", "  ")[0] == LocalNmtRoute.None);
+        Check(
+            "中国語の画面でも、かなが 2 文字以上の行は日本語として訳さない",
+            Plan("ja", "系统设置", "人物预设", "模组管理", "プログラムから開く")[3] == LocalNmtRoute.None);
+        Check(
+            "中国語の画面に読み違いのカタカナが 1 文字あっても中国語として訳す",
+            Plan("ja", "攻击カ +25", "系统设置", "人物预设").All(r => r == LocalNmtRoute.ChineseToJapanese));
+        Check(
+            "英語が多い画面の漢字 1 文字は訳さない（アイコンの読み違い）",
+            Plan("ja", "Attack Power", "Lightning Bolt", "木")[2] == LocalNmtRoute.None);
+        Check(
+            "中国語の画面の漢字 1 文字は訳す",
+            Plan("ja", "查", "系统设置", "人物预设")[0] == LocalNmtRoute.ChineseToJapanese);
+
+        var split = LocalNmtRoutes.SplitChineseSentences("我没法捡起道具！请按下Q键。或使用鼠标滚轮？");
+        Check("中国語は句点で区切る", split.Count == 3, $"← {string.Join(" | ", split)}");
 
         Console.WriteLine();
         Console.WriteLine(failures == 0 ? "すべて期待どおり。" : $"★ {failures} 件が期待と違う。");
@@ -696,6 +759,116 @@ internal static class Program
         Check("隅のウィンドウは、どちらかを出すときだけ要る", !defaults.AnyVisible
               && (defaults with { ShowProcessingTime = true }).AnyVisible
               && (defaults with { Enabled = true }).AnyVisible);
+
+        Console.WriteLine();
+        Console.WriteLine(failures == 0 ? "すべて期待どおり。" : $"★ {failures} 件が期待と違う。");
+        return failures == 0 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// 中国語をローカルで訳す経路（中→英 / 中→英→日）を、実際のモデルで確かめる（2026-10-19 追加）。
+    /// </summary>
+    /// <remarks>
+    /// <para>中→英のモデルは英→日のモデルの隣（<c>out/opus-zh-en/int8</c>）を見る。</para>
+    /// <para><b>訳文の質は人が読んで判断する。</b>ここで機械的に見るのは、
+    /// 数値が消えないこと・文が消えないこと・日本語のゲームの漢字だけの行を中国語として訳さないこと。</para>
+    /// <para><b>Python と訳文が完全には一致しない</b>（2026-10-19。56 件中 8 件で、確率がほぼ同点の語が入れ替わる）。
+    /// 分かち書きと手順は一致しており、ONNX Runtime の版の違い（製品 1.29.0 / Python 1.30.0）による計算の差と見ている。</para>
+    /// </remarks>
+    private static async Task<int> CheckChineseAsync(LocalNmtOptions baseOptions)
+    {
+        var failures = 0;
+
+        void Check(string label, bool ok, string detail = "")
+        {
+            if (!ok)
+            {
+                failures++;
+            }
+
+            Console.WriteLine($"  {(ok ? "  " : "★ ")}{label,-44} {(ok ? "OK" : "NG"),-4}{detail}");
+        }
+
+        var options = baseOptions with
+        {
+            ChineseModelDirectory = Path.GetFullPath(
+                Path.Combine(baseOptions.ModelDirectory, "..", "..", "opus-zh-en", "int8")),
+        };
+
+        using var local = new LocalNmtTranslator(options);
+        if (!local.HasChineseModel)
+        {
+            Console.WriteLine($"中→英のモデルがありません: {options.ChineseModelDirectory}");
+            Console.WriteLine("tools/nmt-convert/convert.py Helsinki-NLP/opus-mt-zh-en out/opus-zh-en で変換してください。");
+            return 1;
+        }
+
+        string[] chinese =
+        [
+            "承让了！你非常厉害，但是我更强！",
+            "在手中持有斧子等道具的状态下，无法捡起地面上的物品。请按下Q键，或使用鼠标滚轮，切换到空手的状态吧。",
+            "装备后，防御力提升15%，但移动速度降低10%。",
+            "对目标造成120点伤害，并使其眩晕2秒。",
+            "冷却时间：8秒",
+            "系统设置",
+            "你无法在战斗中使用此物品。",
+        ];
+
+        foreach (var target in new[] { "en", "ja" })
+        {
+            Console.WriteLine($"=== 中国語 → {TargetLanguages.DisplayNameOf(target)}（{(target == "ja" ? "中→英→日" : "中→英")}）===");
+            var watch = Stopwatch.StartNew();
+            var result = await local
+                .TranslateAsync(new TranslationRequest(string.Join('\n', chinese)) { TargetLanguage = target })
+                .ConfigureAwait(false);
+            var elapsed = watch.Elapsed;
+            var lines = result.Text.Split('\n');
+
+            for (var i = 0; i < chinese.Length; i++)
+            {
+                Console.WriteLine($"  {chinese[i]}");
+                Console.WriteLine($"    → {(i < lines.Length ? lines[i] : "（無し）")}");
+            }
+
+            Check("成功する", result.Outcome == TranslationOutcome.Succeeded, $"← {result.Outcome} {result.Message}");
+            Check("行数が変わらない", lines.Length == chinese.Length);
+            Check("どの行も原文のまま返さない", lines.Zip(chinese).All(p => p.First.Length > 0 && p.First != p.Second));
+
+            var lost = chinese
+                .Zip(lines)
+                .SelectMany(p => NumberVerifier.Extract(p.First).Where(n => !p.Second.Contains(n, StringComparison.Ordinal)))
+                .ToList();
+            Check("数値が消えない", lost.Count == 0, lost.Count == 0 ? string.Empty : $"← 消えた: {string.Join(", ", lost)}");
+
+            // 中→英は文が続くと途中を落とすため、区切ってから訳している。2 文目の内容が残っているかで見る。
+            var second = lines.Length > 1 ? lines[1] : string.Empty;
+            Check(
+                "2 文続く行の後ろの文が残る",
+                target == "en"
+                    ? second.Contains("mouse", StringComparison.OrdinalIgnoreCase)
+                    : second.Contains("マウス", StringComparison.Ordinal),
+                $"← {second}");
+            Console.WriteLine($"  {chinese.Length} 行 {elapsed.TotalMilliseconds:F0} ms（中→英のモデルの読み込みを含むことがある）");
+            Console.WriteLine();
+        }
+
+        Console.WriteLine("=== 混ざった画面（英語と中国語）→ 日本語 ===");
+        var mixed = await local
+            .TranslateAsync(new TranslationRequest("New Game\n系统设置") { TargetLanguage = "ja" })
+            .ConfigureAwait(false);
+        var mixedLines = mixed.Text.Split('\n');
+        Check("英語の行は英→日で訳す", mixedLines.Length == 2 && mixedLines[0] != "New Game", $"← {mixedLines[0]}");
+        Check("中国語の行は中→英→日で訳す", mixedLines.Length == 2 && mixedLines[1] != "系统设置", $"← {mixedLines.ElementAtOrDefault(1)}");
+
+        Console.WriteLine();
+        Console.WriteLine("=== 日本語のゲームの漢字だけの行は訳さない ===");
+        var japaneseScreen = await local
+            .TranslateAsync(new TranslationRequest("設定\nゲームを始める\nAttack Power") { TargetLanguage = "ja" })
+            .ConfigureAwait(false);
+        var japaneseLines = japaneseScreen.Text.Split('\n');
+        Check("「設定」を中国語として訳さない", japaneseLines.ElementAtOrDefault(0) == "設定", $"← {japaneseLines.ElementAtOrDefault(0)}");
+        Check("かなの行も訳さない", japaneseLines.ElementAtOrDefault(1) == "ゲームを始める");
+        Check("同じ画面の英語は訳す", japaneseLines.ElementAtOrDefault(2) is { } attack && attack != "Attack Power", $"← {japaneseLines.ElementAtOrDefault(2)}");
 
         Console.WriteLine();
         Console.WriteLine(failures == 0 ? "すべて期待どおり。" : $"★ {failures} 件が期待と違う。");

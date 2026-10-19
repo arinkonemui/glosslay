@@ -5,9 +5,18 @@ namespace Glosslay.Translation;
 /// </summary>
 /// <param name="Tag">BCP 47 のタグ。設定ファイルとキャッシュの鍵に使う。</param>
 /// <param name="DisplayName">画面に出す名前。<b>その言語自身の表記で書く。</b></param>
-/// <param name="LocalSupported">同梱のモデルで訳せるか。</param>
+/// <param name="LocalSupported">同梱のモデルで（どれかの原文を）訳せるか。</param>
 public sealed record TargetLanguageOption(string Tag, string DisplayName, bool LocalSupported)
 {
+    /// <summary>
+    /// 同梱のモデルで訳せる原文の言語（画面の説明に使う）。例: 「英語・中国語」。
+    /// </summary>
+    /// <remarks>
+    /// <b>訳先ごとに訳せる原文が違う</b>（日本語へは英・中、英語へは中だけ）。
+    /// 「訳せる / 訳せない」の 2 値では、英語を選んだ人に日本語の原文も訳せると誤解させる。
+    /// </remarks>
+    public string LocalSources { get; init; } = string.Empty;
+
     /// <summary>画面に出す名前。</summary>
     /// <remarks>
     /// <b>レコードの既定の表記を使わせない。</b>一覧に並べると
@@ -21,7 +30,8 @@ public sealed record TargetLanguageOption(string Tag, string DisplayName, bool L
 /// 訳文の言語の選択肢（FR-CFG-01 の「言語」）。
 /// </summary>
 /// <remarks>
-/// <para><b>同梱のモデルで訳せるのは日本語だけ</b>（FR-TRN-03。v1.0 で用意するのは en-ja のみ）。
+/// <para><b>同梱のモデルで訳せるのは日本語と英語へ</b>（FR-TRN-03）。日本語へは英語・中国語の原文、
+/// 英語へは中国語の原文だけ（2026-10-19 に中国語を追加。<see cref="LocalNmtRoutes"/>）。
 /// それ以外はクラウド翻訳のAPIキーが要る（FR-TRN-04 の BYOK）。
 /// <b>選べることと動くことは別</b>なので、一覧の時点で区別できるようにしてある。</para>
 /// <para><b>最終的に断るのはバックエンド自身。</b>ここは画面に出すための一覧で、
@@ -34,21 +44,21 @@ public sealed record TargetLanguageOption(string Tag, string DisplayName, bool L
 /// </remarks>
 public static class TargetLanguages
 {
-    /// <summary>既定の言語。<b>キーが無くても動く唯一の選択肢。</b></summary>
+    /// <summary>既定の言語。<b>キーが無くても英語・中国語の原文を訳せる。</b></summary>
     public const string Default = "ja";
 
     /// <summary>
     /// 選べる言語。
     /// </summary>
     /// <remarks>
-    /// <b>日本語を先頭に置く。</b>既定であり、唯一キー無しで動くため。
+    /// <b>日本語を先頭に置く。</b>既定であり、キー無しで最も多くの原文を訳せるため。
     /// 残りは OCR が読める言語（FR-OCR-02 の英・中・日）と、
     /// UI が対応する言語（FR-SYS-03 の日本語・英語）から採った。
     /// </remarks>
     public static IReadOnlyList<TargetLanguageOption> All { get; } =
     [
-        new(Default, "日本語", LocalSupported: true),
-        new("en", "English", LocalSupported: false),
+        new(Default, "日本語", LocalSupported: true) { LocalSources = "英語・中国語" },
+        new("en", "English", LocalSupported: true) { LocalSources = "中国語" },
         new("zh-Hans", "简体中文", LocalSupported: false),
         new("zh-Hant", "繁體中文", LocalSupported: false),
         new("ko", "한국어", LocalSupported: false),

@@ -53,4 +53,17 @@
     </None>
   </ItemGroup>
 
+  <!--
+    中→英のモデル（2026-10-19 追加）を models\nmt\zh-en へ複製する。LocalNmtOptions.ChineseModelDirectory の既定と一致させてある。
+    中国語の原文を訳すのに使う（訳先が英語なら中→英、日本語なら中→英→日）。無くても他の翻訳は動く。
+    変換は tools/nmt-convert（convert.py Helsinki-NLP/opus-mt-zh-en out/opus-zh-en）。
+  -->
+  <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)..\..\tools\nmt-convert\out\opus-zh-en\int8')">
+    <None Include="..\..\tools\nmt-convert\out\opus-zh-en\int8\*.onnx;..\..\tools\nmt-convert\out\opus-zh-en\int8\*.spm;..\..\tools\nmt-convert\out\opus-zh-en\int8\vocab.json">
+      <Link>models\nmt\zh-en\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
+    </None>
+  </ItemGroup>
+
 </Project>
