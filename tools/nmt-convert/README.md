@@ -77,6 +77,8 @@ SentencePieceTokenizer.Create(stream, addBeginningOfSentence: false, addEndOfSen
 | `Mitsua/elan-mt-bt-en-ja` | **CC BY-SA 4.0** | 帰属表示と**同ライセンスでの公開**が要る |
 | `staka/fugumt-en-ja` | **CC BY-SA 4.0** | 同上 |
 | `Helsinki-NLP/opus-mt-tc-big-zh-ja` | CC BY-4.0 | 帰属表示が要る |
+| `Mitsua/elan-mt-bt-ja-en` | **CC BY-SA 4.0** | 英→日と同じ。帰属表示と**同ライセンスでの公開**が要る（2026-10-16 に日→英の候補として変換） |
+| `Helsinki-NLP/opus-mt-zh-en` | CC BY 4.0 | 帰属表示が要る（2026-10-16 に中→英の候補として変換） |
 | `facebook/nllb-200-*` | **CC-BY-NC** | **非商用。使用不可** |
 
 **書き換えた `.spm` と量子化した ONNX も派生物**にあたります。
