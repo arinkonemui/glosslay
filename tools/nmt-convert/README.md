@@ -77,8 +77,10 @@ SentencePieceTokenizer.Create(stream, addBeginningOfSentence: false, addEndOfSen
 | `Mitsua/elan-mt-bt-en-ja` | **CC BY-SA 4.0** | 帰属表示と**同ライセンスでの公開**が要る |
 | `staka/fugumt-en-ja` | **CC BY-SA 4.0** | 同上 |
 | `Helsinki-NLP/opus-mt-tc-big-zh-ja` | CC BY-4.0 | 帰属表示が要る |
-| `Mitsua/elan-mt-bt-ja-en` | **CC BY-SA 4.0** | 英→日と同じ。帰属表示と**同ライセンスでの公開**が要る（2026-10-16 に日→英の候補として変換） |
+| `Mitsua/elan-mt-bt-ja-en` | **CC BY-SA 4.0** | 英→日と同じ。帰属表示と**同ライセンスでの公開**が要る。**2026-10-25 に採用**（日→英と、日→英→中の 1 段目） |
 | `Helsinki-NLP/opus-mt-zh-en` | CC BY 4.0 | 帰属表示が要る。**2026-10-19 に採用**（中→英と、中→英→日の 1 段目） |
+| `Helsinki-NLP/opus-mt-en-zh` | Apache 2.0 | ライセンス文の同梱と、改変したことの明示が要る。**2026-10-25 に採用**（英→中と、日→英→中の 2 段目）。文頭に `>>cmn_Hans<<` を付ける |
+| `Helsinki-NLP/opus-mt-ko-en` | Apache 2.0 | 2026-10-21 に評価して**採らない**（ゲームの語を外し、意味が変わる文が多い。韓国語はクラウドのみ） |
 | `facebook/nllb-200-*` | **CC-BY-NC** | **非商用。使用不可** |
 
 **書き換えた `.spm` と量子化した ONNX も派生物**にあたります。
