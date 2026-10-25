@@ -47,8 +47,20 @@ public partial class MainWindow : Window, IDisposable
     /// OCR エンジン（FR-OCR-03）。<b>差し替え点</b>のためインターフェース越しに持つ。
     /// </summary>
 #pragma warning disable CA1859 // 具象型の方が速いが、ここは高速モードとの差し替え点。
-    private IOcrEngine _ocrEngine = new PaddleOcrEngine();
+    private IOcrEngine _ocrEngine;
 #pragma warning restore CA1859
+
+    /// <summary>
+    /// 差し替えた後、まだ読み取りの途中で使われているかもしれないエンジン。
+    /// </summary>
+    /// <remarks>
+    /// 原文の言語を変えると読み取りのモデルが変わる（韓国語）。プロファイルの自動適用は
+    /// 翻訳の途中でも起きうるため、<b>使用中のエンジンをその場で破棄しない</b>（<see cref="RecognizeAsync"/>）。
+    /// </remarks>
+    private readonly List<IOcrEngine> _retiredOcrEngines = [];
+
+    /// <summary>読み取りの途中の数（UI スレッドだけで数える）。</summary>
+    private int _ocrInFlight;
 
     /// <summary>どちらのエンジンを使うか（FR-OCR-03）。</summary>
     private OcrEngineOptions _ocrOptions = OcrEngineOptions.Load();
@@ -103,8 +115,11 @@ public partial class MainWindow : Window, IDisposable
     /// RULES.md 🟡-1 の「既定はローカルNMT、クラウドは精度を上げたい人向けの任意の
     /// アップグレード」をそのまま表している。<b>この順序を逆にしないこと。</b>
     /// </remarks>
+    /// <remarks>
+    /// <b>「クラウドのみ」の組み合わせ（RULES.md 🟡-1 の表）では、自動でもクラウド</b>（<see cref="TranslatorSelection"/>）。
+    /// </remarks>
     private ITranslator ActiveTranslator =>
-        TranslatorSelection.Active(_translationOptions.Backend, _cloudTranslator, _localTranslator);
+        TranslatorSelection.Active(_translationOptions.Backend, _cloudTranslator, _localTranslator, LocalReadiness);
 
     /// <summary>
     /// <see cref="ActiveTranslator"/> が失敗したときの切り替え先（FR-TRN-06）。
@@ -116,7 +131,11 @@ public partial class MainWindow : Window, IDisposable
     /// （切り替えても同じ失敗になる）。
     /// </remarks>
     private ITranslator? FallbackTranslator =>
-        TranslatorSelection.Fallback(_translationOptions.Backend, _cloudTranslator, _localTranslator);
+        TranslatorSelection.Fallback(_translationOptions.Backend, _cloudTranslator, _localTranslator, LocalReadiness);
+
+    /// <summary>いまの組み合わせ（原文の言語→メイン言語）を、ローカルで訳せる状態か。</summary>
+    private LocalReadiness LocalReadiness =>
+        _localTranslator.ReadinessFor(_translationOptions.Source, _translationOptions.Main);
 
     /// <summary>自動監視の設定（FR-MOD-02 / 03 / 04）。</summary>
     private AutoWatchOptions _watchOptions = AutoWatchOptions.Load();
@@ -301,6 +320,10 @@ public partial class MainWindow : Window, IDisposable
     {
         InitializeComponent();
         _cloudTranslator = CreateCloudTranslator();
+
+        // 設定（エンジン・原文の言語）どおりに作る。以前はここで常に既定のエンジンを作っており、
+        // 高速モードを選んでいても起動直後は既定のエンジンで読んでいた。
+        _ocrEngine = CreateOcrEngine();
 
         // FR-SYS-10 / RULES.md 🟡-4: 件数の上限は必ず資格サービスを経由する。
         _profileStore = new ProfileStore(_entitlements);
@@ -753,7 +776,7 @@ private void StartHotkey()
             ? new FrameRect(region.X, region.Y, region.Width, region.Height)
             : null,
         Preprocess = BuildPreprocessOptions(),
-        TargetLanguage = _translationOptions.TargetLanguage,
+        SourceLanguage = _translationOptions.Source,
         AutoWatch = AutoWatchCheck.IsChecked == true,
         CursorDwell = CursorDwellCheck.IsChecked == true,
     };
@@ -874,16 +897,13 @@ private void StartHotkey()
             : null;
         ShowRegionRectangle();
 
-        // 訳文の言語はゲームごとに変わりうる（FR-CFG-01）。覚えている訳は
-        // 言語ごとに分かれているが、切り替えた直後に前の言語の訳が出ると紛らわしい。
-        if (!string.Equals(_translationOptions.TargetLanguage, profile.TargetLanguage, StringComparison.OrdinalIgnoreCase))
+        // 原文の言語はゲームごとに変わる（FR-CFG-01 / FR-OCR-02）。メイン言語はアプリ全体で 1 つで、ここでは変えない。
+        // 以前のプロファイル（原文の言語を持たない）を当てたときは、いまの原文の言語のまま。
+        // 既定（英語）へ戻すと、中国語のゲームのプロファイルが英語の原文に変わってしまう。
+        if (profile.SourceLanguage is { } profileSource)
         {
-            _translationOptions = _translationOptions with { TargetLanguage = profile.TargetLanguage };
-            _translationOptions.Save();
-            _translationCache.Clear();
+            SetSourceLanguage(Languages.NormalizeSource(profileSource, _translationOptions.Main));
         }
-
-        SelectTargetLanguage(profile.TargetLanguage);
 
         // FR-MOD-08 の案内がまだなら、自動で当たったプロファイルの自動監視は入れない。
         // ゲームが前面のときに問いかけても、こちらのウィンドウは背面で見えない。
@@ -900,7 +920,7 @@ private void StartHotkey()
         SelectTargetFor(profile);
 
         StatusText.Text = $"プロファイル「{profile.Name}」を{(automatic ? "自動で適用" : "適用")}しました。"
-            + AppliedSummary(profile, watchEnabled: profile.AutoWatch && !deferWatch)
+            + AppliedSummary(profile, _translationOptions.Source, watchEnabled: profile.AutoWatch && !deferWatch)
             + (deferWatch
                 ? "／自動監視は初回だけ確認が要ります。この画面でチェックを入れてください。"
                 : string.Empty);
@@ -915,7 +935,8 @@ private void StartHotkey()
     /// 実際に自動監視が始まったか。<b>プロファイルの値ではなく結果を渡す。</b>
     /// FR-MOD-08 の案内待ちで見送った場合に「ON」と出しては嘘になる。
     /// </param>
-    private static string AppliedSummary(Profile profile, bool watchEnabled)
+    /// <param name="sourceLanguage">当てた後の原文の言語。</param>
+    private static string AppliedSummary(Profile profile, string sourceLanguage, bool watchEnabled)
     {
         var parts = new List<string>
         {
@@ -923,7 +944,7 @@ private void StartHotkey()
                 ? $"範囲 {region.X},{region.Y} {region.Width}x{region.Height}"
                 : "範囲 全体",
             profile.Preprocess.ToString(),
-            $"訳文 {TargetLanguages.DisplayNameOf(profile.TargetLanguage)}",
+            $"原文 {Languages.NameOf(sourceLanguage)}",
         };
 
         if (watchEnabled)
@@ -1174,7 +1195,7 @@ private void StartHotkey()
 
         RefreshTraySettings();
         RefreshTargets();
-        SelectTargetLanguage(_translationOptions.TargetLanguage);
+        RefreshLanguageChoices();
         RefreshTranslatorState();
         RefreshProfiles();
         UpdateProfileTargetText();
@@ -1210,23 +1231,21 @@ private void StartHotkey()
     }
 
     /// <summary>
-    /// ローカルNMT のモデルを先に読む。
+    /// いまの組み合わせに要るローカルNMT のモデルを先に読む。
     /// </summary>
     /// <remarks>
-    /// <b>失敗しても黙って進む。</b>モデルが無い環境（変換していない場合）でも
+    /// <para><b>失敗しても黙って進む。</b>モデルが無い環境（変換していない場合）でも
     /// クラウド翻訳は使えるため、起動を妨げない。翻訳を試みた時点で
-    /// <see cref="TranslationOutcome.NotConfigured"/> として具体的に知らせる。
+    /// <see cref="TranslationOutcome.NotConfigured"/> として具体的に知らせる。</para>
+    /// <para>「クラウドのみ」の組み合わせでは何も読まない（使わないモデルでメモリを増やさない）。</para>
     /// </remarks>
     private async Task WarmUpTranslatorAsync()
     {
-        if (!_localTranslator.IsConfigured)
-        {
-            return;
-        }
-
         try
         {
-            await _localTranslator.InitializeAsync().ConfigureAwait(true);
+            await _localTranslator
+                .PrepareAsync(_translationOptions.Source, _translationOptions.Main)
+                .ConfigureAwait(true);
         }
         catch (Exception exception) when (exception is FileNotFoundException or InvalidDataException)
         {
@@ -1236,10 +1255,16 @@ private void StartHotkey()
 
     private async Task WarmUpOcrAsync()
     {
+        // 読み込みの途中で差し替わっても、このエンジンを破棄しない（RecognizeAsync と同じ数え方）。
+        var engine = _ocrEngine;
+        _ocrInFlight++;
         try
         {
-            await _ocrEngine.InitializeAsync().ConfigureAwait(true);
-            StatusText.Text = $"準備完了（{_ocrEngine.Name}）";
+            await engine.InitializeAsync().ConfigureAwait(true);
+            if (ReferenceEquals(engine, _ocrEngine))
+            {
+                StatusText.Text = $"準備完了（{engine.Name}）";
+            }
         }
         catch (FileNotFoundException ex)
         {
@@ -1251,9 +1276,79 @@ private void StartHotkey()
             // FR-OCR-10: 高速モードの言語パックが無い。何をすればよいかはメッセージにある。
             StatusText.Text = ex.Message;
         }
+        finally
+        {
+            _ocrInFlight--;
+            DisposeRetiredOcrEngines();
+        }
 
         RefreshOcrEngineState();
     }
+
+    /// <summary>
+    /// 読み取る。<b>途中でエンジンが差し替わっても、使っている方を破棄しない。</b>
+    /// </summary>
+    private async Task<OcrResult> RecognizeAsync(Bgra32Image image)
+    {
+        var engine = _ocrEngine;
+        _ocrInFlight++;
+        try
+        {
+            return await engine.RecognizeAsync(image).ConfigureAwait(true);
+        }
+        finally
+        {
+            _ocrInFlight--;
+            DisposeRetiredOcrEngines();
+        }
+    }
+
+    /// <summary>
+    /// 設定（エンジン・原文の言語）どおりのエンジンに差し替え、先に読み込んでおく（FR-OCR-08）。
+    /// </summary>
+    /// <remarks>
+    /// 読み取り結果が変わるため、前の結果は捨てる。残したまま翻訳すると、どちらのエンジンの結果か分からなくなる。
+    /// </remarks>
+    private void ReplaceOcrEngine()
+    {
+        _lastOcrLines = [];
+        TranslateButton.IsEnabled = false;
+
+        _retiredOcrEngines.Add(_ocrEngine);
+        _ocrEngine = CreateOcrEngine();
+        DisposeRetiredOcrEngines();
+
+        RefreshOcrEngineState();
+        RefreshOcrLanguages();
+        _ = WarmUpOcrAsync();
+    }
+
+    /// <summary>差し替えた古いエンジンを、読み取りの途中でなければ破棄する。</summary>
+    private void DisposeRetiredOcrEngines()
+    {
+        if (_ocrInFlight > 0)
+        {
+            return;
+        }
+
+        foreach (var engine in _retiredOcrEngines)
+        {
+            engine.Dispose();
+        }
+
+        _retiredOcrEngines.Clear();
+    }
+
+    /// <summary>
+    /// 原文の言語に合わせると、読み取りのエンジンを作り直す必要があるか。
+    /// </summary>
+    /// <remarks>
+    /// 既定のエンジンは韓国語だけ認識モデルが別（<see cref="PaddleOcrOptions.ForSourceLanguage"/>）。
+    /// 高速モードは原文の言語の認識器を使う（<see cref="WindowsOcrEngine.LanguageFor"/>）。
+    /// </remarks>
+    private string OcrModelKey(string sourceLanguage) => _ocrOptions.Engine == OcrEngineChoice.Windows
+        ? "windows:" + (WindowsOcrEngine.LanguageFor(sourceLanguage) ?? sourceLanguage)
+        : PaddleOcrOptions.UsesKoreanModel(sourceLanguage) ? "paddle:ko" : "paddle";
 
     // ===== OCR エンジンの選択（FR-OCR-03 / FR-OCR-10） =====
 
@@ -1277,11 +1372,7 @@ private void StartHotkey()
             : OcrSpeedFacts.DefaultModeNote;
 
         // FR-OCR-10: 言語パックが無ければ、何が入っているかと足す場所を出す。
-        var available = WindowsOcrEngine.AvailableLanguages;
-        OcrLanguageNote.Text = available.Count == 0
-            ? "高速モードに使える言語が 1 つも入っていません。下のボタンから追加してください。"
-            : $"高速モードで読める言語: {string.Join(" / ", available)}"
-                + "（原文の言語が無ければ、下のボタンから追加してください）";
+        RefreshOcrLanguages();
 
         OcrEngineStateText.Text = $"{_ocrEngine.Name}"
             + (_ocrEngine.ProvidesConfidence ? string.Empty : " — 確信度を返しません");
@@ -1301,30 +1392,30 @@ private void StartHotkey()
         _ocrOptions = _ocrOptions with { Engine = choice };
         _ocrOptions.Save();
 
-        // 読み取り結果が変わるため、前の結果は捨てる。
-        // 残したまま翻訳すると、どちらのエンジンの結果か分からなくなる。
-        _lastOcrLines = [];
-        TranslateButton.IsEnabled = false;
-
-        _ocrEngine.Dispose();
-        _ocrEngine = CreateOcrEngine();
-        RefreshOcrEngineState();
-        RefreshOcrLanguages();
+        // FR-OCR-08: 初回の OCR で待たせない（ReplaceOcrEngine が先に読み込む）。
+        ReplaceOcrEngine();
 
         StatusText.Text = choice == OcrEngineChoice.Windows
             ? "高速モードに切り替えました。読み直すには OCR を実行してください。"
             : "既定のエンジンに戻しました。読み直すには OCR を実行してください。";
-
-        // FR-OCR-08: 初回の OCR で待たせない。
-        _ = WarmUpOcrAsync();
     }
 
-    /// <summary>設定どおりのエンジンを作る。</summary>
-    private IOcrEngine CreateOcrEngine() => _ocrOptions.Engine switch
+    /// <summary>
+    /// 設定どおりのエンジンを作る。<b>読むモデル・言語は原文の言語で決まる</b>（FR-OCR-02）。
+    /// </summary>
+    /// <remarks>
+    /// 高速モードで原文の言語の認識器が入っていなければ、その言語の名前で作る。
+    /// 読み込みで「入っていない」と分かり、足す場所を案内する（FR-OCR-10）。
+    /// </remarks>
+    private IOcrEngine CreateOcrEngine()
     {
-        OcrEngineChoice.Windows => new WindowsOcrEngine(_ocrOptions.WindowsLanguage),
-        _ => new PaddleOcrEngine(),
-    };
+        var source = _translationOptions.Source;
+        return _ocrOptions.Engine switch
+        {
+            OcrEngineChoice.Windows => new WindowsOcrEngine(WindowsOcrEngine.LanguageFor(source) ?? source),
+            _ => new PaddleOcrEngine(PaddleOcrOptions.ForSourceLanguage(source)),
+        };
+    }
 
     /// <summary>
     /// 言語を追加する設定画面を開く（FR-OCR-10）。
@@ -2119,7 +2210,7 @@ private void StartHotkey()
         try
         {
             var (image, options, offsetX, offsetY) = PrepareForOcr(_lastFrame);
-            var result = await _ocrEngine.RecognizeAsync(image).ConfigureAwait(true);
+            var result = await RecognizeAsync(image).ConfigureAwait(true);
             var lines = MapToSource(result.Lines, options.Scale, offsetX, offsetY);
 
             _lastOcrLines = lines;
@@ -2158,19 +2249,28 @@ private void StartHotkey()
 
         // いま何で動くのかを出す。キーが無くても「使えない」ではないことを見せる。
         var active = ActiveTranslator;
-        TranslatorStateText.Text = active.IsConfigured
-            ? $"{active.Name} — 使用中"
-            : ReferenceEquals(active, _cloudTranslator)
-                ? $"{active.Name} — キー未登録のため訳せません（「自動」にすればローカルで動きます）"
-                : $"{active.Name} — モデル未配置";
+        var readiness = LocalReadiness;
+        var pair = Languages.PairName(_translationOptions.Source, _translationOptions.Main);
+        TranslatorStateText.Text = ReferenceEquals(active, _cloudTranslator)
+            ? active.IsConfigured
+                ? $"{active.Name} — 使用中（{pair}）"
+                : readiness == LocalReadiness.CloudOnlyPair
+                    ? $"{active.Name} — キー未登録のため訳せません（{pair}はクラウド翻訳でのみ訳せます）"
+                    : $"{active.Name} — キー未登録のため訳せません（「自動」にすればローカルで動きます）"
+            : readiness switch
+            {
+                LocalReadiness.Ready => $"{active.Name} — 使用中（{pair}）",
+                LocalReadiness.ModelMissing => $"{active.Name} — {pair}の翻訳モデルが入っていません",
+                _ => $"{active.Name} — {pair}はローカルでは訳せません（クラウド翻訳でのみ訳せます）",
+            };
 
         DeleteApiKeyButton.IsEnabled = configured;
 
-        // キーの有無とバックエンドの選択で、選んだ言語が訳せるかは変わる。
+        // キーの有無とバックエンドの選択で、選んだ組み合わせが訳せるかは変わる。
         // 一覧がまだできていない起動直後は何もしない（OnLoaded が後で呼ぶ）。
-        if (TargetLanguageCombo.ItemsSource is not null)
+        if (SourceLanguageCombo.ItemsSource is not null)
         {
-            UpdateTargetLanguageNote();
+            UpdatePairNote();
         }
     }
 
@@ -2554,50 +2654,22 @@ private void StartHotkey()
     }
 
     /// <summary>
-    /// 高速モードの認識言語を一覧へ反映する（FR-OCR-02 / 10）。
+    /// 高速モードで読む言語を出す（FR-OCR-02 / 10）。
     /// </summary>
     /// <remarks>
-    /// <b>既定のエンジンでは出さない。</b>PaddleOCR は同梱のモデルが
-    /// 英・中・日をまとめて扱うため、選ばせる意味がない。
+    /// <b>高速モードで読む言語は原文の言語に合わせる</b>（2026-10-25）。それまでは別に選ばせていた。
+    /// 入っていなければ、何が入っているかと足す場所を出す。
     /// </remarks>
     private void RefreshOcrLanguages()
     {
         var available = WindowsOcrEngine.AvailableLanguages;
-        var isFast = _ocrOptions.Engine == OcrEngineChoice.Windows;
+        var source = _translationOptions.Source;
+        var name = Languages.NameOf(source);
+        var list = available.Count > 0 ? string.Join(" / ", available) : "（ひとつも入っていません）";
 
-        OcrLanguagePanel.Visibility = isFast && available.Count > 0
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-
-        if (!isFast || available.Count == 0)
-        {
-            return;
-        }
-
-        _suppressTuningChange = true;
-        OcrLanguageCombo.ItemsSource = available.ToArray();
-        OcrLanguageCombo.SelectedItem =
-            available.FirstOrDefault(t => string.Equals(t, _ocrOptions.WindowsLanguage, StringComparison.OrdinalIgnoreCase))
-            ?? available[0];
-        _suppressTuningChange = false;
-    }
-
-    private void OnOcrLanguageChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_suppressTuningChange || OcrLanguageCombo.SelectedItem is not string language)
-        {
-            return;
-        }
-
-        _ocrOptions = _ocrOptions with { WindowsLanguage = language };
-        _ocrOptions.Save();
-
-        _ocrEngine.Dispose();
-        _ocrEngine = CreateOcrEngine();
-        RefreshOcrEngineState();
-
-        StatusText.Text = $"原文の言語を {language} にしました。";
-        _ = WarmUpOcrAsync();
+        OcrLanguageNote.Text = WindowsOcrEngine.LanguageFor(source) is { } match
+            ? $"高速モードでは、原文の言語（{name}）を {match} の認識器で読みます。入っている言語: {list}"
+            : $"高速モードで{name}を読むには、Windows に{name}を追加してください（下のボタン）。入っている言語: {list}";
     }
 
     private void OnDeleteApiKeyClick(object sender, RoutedEventArgs e)
@@ -2609,85 +2681,172 @@ private void StartHotkey()
         StatusText.Text = "APIキーを削除しました。";
     }
 
-    // ===== 訳文の言語（FR-CFG-01） =====
+    // ===== メイン言語と原文の言語（FR-SYS-03 / FR-OCR-02 / RULES.md 🟡-1） =====
 
     /// <summary>
-    /// 一覧を作り、いまの値を選ぶ。
+    /// 一覧を作り、いまの値を選ぶ。組み合わせの説明とバックエンドの選べる状態も合わせる。
     /// </summary>
     /// <remarks>
-    /// <b>設定ファイルに一覧外のタグが書かれていても捨てない。</b>
+    /// <para><b>設定ファイルに一覧外のメイン言語が書かれていても捨てない。</b>
     /// 手で編集できる以上そうなりうるし、黙って日本語へ戻すと
-    /// 「書いたのに効いていない」ことに気づけない（RULES.md 🔵）。
+    /// 「書いたのに効いていない」ことに気づけない（RULES.md 🔵）。そういう組み合わせはクラウドで訳す。</para>
+    /// <para><b>原文の言語の一覧からメイン言語を除く。</b>日本語→日本語では何も訳せない。</para>
     /// </remarks>
-    private void SelectTargetLanguage(string tag)
+    private void RefreshLanguageChoices()
     {
-        var options = TargetLanguages.All.ToList();
-        if (TargetLanguages.Find(tag) is null)
+        var main = _translationOptions.Main;
+        var source = _translationOptions.Source;
+
+        var mains = Languages.MainOptions.ToList();
+        if (Languages.FindMain(main) is null)
         {
-            options.Add(new TargetLanguageOption(tag, tag, LocalSupported: false));
+            mains.Add(new MainLanguageOption(main, main));
+        }
+
+        var sources = Languages.SourceOptions.Where(o => !Languages.SameLanguage(o.Tag, main)).ToList();
+        if (!sources.Exists(o => Languages.SameLanguage(o.Tag, source)))
+        {
+            sources.Add(new SourceLanguageOption(source, source));
         }
 
         _suppressLanguageChange = true;
-        TargetLanguageCombo.ItemsSource = options;
-        TargetLanguageCombo.SelectedItem =
-            options.Find(o => string.Equals(o.Tag, tag, StringComparison.OrdinalIgnoreCase));
+        MainLanguageCombo.ItemsSource = mains;
+        MainLanguageCombo.SelectedItem =
+            mains.Find(o => string.Equals(o.Tag, main, StringComparison.OrdinalIgnoreCase));
+        SourceLanguageCombo.ItemsSource = sources;
+        SourceLanguageCombo.SelectedItem = sources.Find(o => Languages.SameLanguage(o.Tag, source));
         _suppressLanguageChange = false;
 
-        UpdateTargetLanguageNote();
+        UpdatePairNote();
     }
 
     /// <summary>
-    /// 選んだ言語で訳せるのかを、翻訳を試す前に出す。
+    /// いまの組み合わせをどう訳すかを、翻訳を試す前に出す（RULES.md 🟡-1 の表）。
     /// </summary>
     /// <remarks>
-    /// <para><b>訳先ごとに、同梱のモデルで訳せる原文が違う</b>（FR-TRN-03。日本語へは英・中、英語へは中だけ）。
-    /// 訳してみて初めて「対応していません」と出るのでは遅い。
-    /// <b>選んだ時点で分かる</b>ようにする。</para>
-    /// <para>「ローカルのみ」を選んでいる場合は、キーがあっても使われないため別に断る。</para>
+    /// <para>訳してみて初めて「対応していません」と出るのでは遅い。<b>選んだ時点で分かる</b>ようにする。</para>
+    /// <list type="bullet">
+    ///   <item>ローカル — キーが無くても訳せること</item>
+    ///   <item>日→英→中 — 「翻訳精度が大きく下がります。クラウド機能の選択をお勧めします」（2026-10-25 人間の判断）</item>
+    ///   <item>クラウドのみ — キーが要ること。「ローカルのみ」は灰色にして理由を出す（FR-TRN-17）</item>
+    /// </list>
+    /// <para><b>「ローカルのみ」が既に選ばれていても外さない。</b>プロファイルの自動適用や設定ファイルの手書きで
+    /// 組み合わさることがある。勝手にクラウドへ切り替えると、外へ送らないことを選んだ人の画面が送られてしまう。
+    /// 訳さずに理由を出す（ローカルが <see cref="TranslationOutcome.Unsupported"/> を返す）。</para>
     /// </remarks>
-    private void UpdateTargetLanguageNote()
+    private void UpdatePairNote()
     {
-        var tag = SelectedTargetLanguage;
-        if (TargetLanguages.Find(tag) is { LocalSupported: true } local)
-        {
-            // 訳せる原文を言う。英語を選んだ人に、日本語の原文も訳せると思わせない。
-            TargetLanguageNote.Text =
-                $"{local.LocalSources}の原文は、APIキーが無くても訳せます。"
-                + "それ以外の原文はクラウド翻訳を使います。translation.json に保存します。";
-            return;
-        }
+        var main = _translationOptions.Main;
+        var source = _translationOptions.Source;
+        var pair = Languages.PairName(source, main);
+        var availability = Languages.Availability(source, main);
+        var localOnly = _translationOptions.Backend == TranslationBackendChoice.LocalOnly;
 
-        var name = TargetLanguages.DisplayNameOf(tag);
-        TargetLanguageNote.Text = _translationOptions.Backend == TranslationBackendChoice.LocalOnly
-            ? $"「ローカルのみ」を選んでいるため、{name}には訳せません。"
-                + "下のバックエンドを「自動」にするか、日本語を選んでください。"
-            : _cloudTranslator.IsConfigured
-                ? $"{name}は同梱のモデルでは訳せないため、クラウド翻訳を使います。"
-                : $"{name}は同梱のモデルでは訳せません。下でAPIキーを登録してください。";
+        var warning = availability is PairAvailability.CloudOnly or PairAvailability.LocalLowQuality;
+        PairNote.Text = availability switch
+        {
+            PairAvailability.CloudOnly => $"{pair}はクラウド翻訳でのみ訳せます。"
+                + (localOnly
+                    ? "「ローカルのみ」では訳せないため、使うバックエンドを「自動」か「クラウドのみ」にしてください。"
+                    : _cloudTranslator.IsConfigured
+                        ? "登録済みのAPIキーで訳します。"
+                        : "クラウド翻訳のAPIキーを作成し、下で登録してください。"),
+
+            PairAvailability.LocalLowQuality =>
+                "翻訳精度が大きく下がります。クラウド機能の選択をお勧めします。"
+                + $"（{pair}はキーが無くても訳せますが、英語を経由する 2 段の翻訳になります）",
+
+            PairAvailability.Same => "原文の言語とメイン言語が同じです。",
+
+            _ => LocalReadiness == LocalReadiness.ModelMissing
+                ? $"{pair}はキーが無くても訳せますが、翻訳モデルが入っていません。"
+                : $"{pair}はAPIキーが無くても訳せます。",
+        };
+        PairNote.Style = (Style)FindResource(warning ? "Warning" : "Hint");
+
+        // 「クラウドのみ」の組み合わせでは「ローカルのみ」を選べない（FR-TRN-17）。
+        var cloudOnly = availability == PairAvailability.CloudOnly;
+        BackendLocalRadio.IsEnabled = !cloudOnly;
+        BackendNote.Visibility = cloudOnly ? Visibility.Visible : Visibility.Collapsed;
+        BackendNote.Text = localOnly
+            ? $"いまは「ローカルのみ」のため、{pair}は訳せません。「自動」か「クラウドのみ」を選んでください。"
+            : $"{pair}はクラウド翻訳でのみ訳せるため、「ローカルのみ」は選べません。";
     }
 
-    /// <summary>いま選ばれている言語のタグ。</summary>
-    private string SelectedTargetLanguage =>
-        TargetLanguageCombo.SelectedItem is TargetLanguageOption option
-            ? option.Tag
-            : _translationOptions.TargetLanguage;
-
-    private void OnTargetLanguageChanged(object sender, SelectionChangedEventArgs e)
+    private void OnMainLanguageChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_suppressLanguageChange || TargetLanguageCombo.SelectedItem is not TargetLanguageOption option)
+        if (_suppressLanguageChange || MainLanguageCombo.SelectedItem is not MainLanguageOption option)
         {
             return;
         }
 
-        _translationOptions = _translationOptions with { TargetLanguage = option.Tag };
+        var previousSource = _translationOptions.Source;
+        _translationOptions = _translationOptions with { MainLanguage = option.Tag, TargetLanguage = null };
+
+        // 原文の言語がメイン言語と同じになったら既定に戻す（Languages.NormalizeSource）。
+        _translationOptions = _translationOptions with { SourceLanguage = _translationOptions.Source };
         _translationOptions.Save();
 
-        // 覚えている訳文は言語ごとに分かれているが、切り替えた直後に前の言語の訳が
-        // 出ると「変わっていない」と見える。まとめて忘れる（FR-TRN-09 のキャッシュ）。
-        _translationCache.Clear();
+        RefreshLanguageChoices();
+        OnLanguagePairChanged(previousSource);
 
-        UpdateTargetLanguageNote();
-        StatusText.Text = $"訳文の言語を{option.DisplayName}にしました。";
+        StatusText.Text = $"メイン言語を{option.DisplayName}にしました（{Languages.PairName(_translationOptions.Source, _translationOptions.Main)}）。"
+            + (Languages.SameLanguage(previousSource, _translationOptions.Source)
+                ? string.Empty
+                : $"原文の言語は{Languages.NameOf(_translationOptions.Source)}にしました。");
+    }
+
+    private void OnSourceLanguageChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressLanguageChange || SourceLanguageCombo.SelectedItem is not SourceLanguageOption option)
+        {
+            return;
+        }
+
+        SetSourceLanguage(option.Tag);
+        StatusText.Text = $"原文の言語を{option.DisplayName}にしました"
+            + $"（{Languages.PairName(_translationOptions.Source, _translationOptions.Main)}）。";
+    }
+
+    /// <summary>
+    /// 原文の言語を変える（画面・プロファイルの適用の両方から）。同じなら何もしない。
+    /// </summary>
+    private void SetSourceLanguage(string sourceLanguage)
+    {
+        var previous = _translationOptions.Source;
+        if (Languages.SameLanguage(previous, sourceLanguage))
+        {
+            return;
+        }
+
+        _translationOptions = _translationOptions with { SourceLanguage = sourceLanguage };
+        _translationOptions.Save();
+
+        RefreshLanguageChoices();
+        OnLanguagePairChanged(previous);
+    }
+
+    /// <summary>
+    /// 組み合わせが変わったら、覚えている訳を忘れ、読み取りと翻訳のモデルを合わせる。
+    /// </summary>
+    /// <remarks>
+    /// <para>覚えている訳文は言語ごとに分かれているが、切り替えた直後に前の組み合わせの訳が
+    /// 出ると「変わっていない」と見える。まとめて忘れる（FR-TRN-09 のキャッシュ）。</para>
+    /// <para><b>読み取りのモデルは韓国語だけ別</b>（FR-OCR-02）。変わるときだけエンジンを作り直す。</para>
+    /// <para>翻訳のモデルも、いまの組み合わせのものを先に読む（初回の翻訳で待たせない）。</para>
+    /// </remarks>
+    private void OnLanguagePairChanged(string previousSource)
+    {
+        _translationCache.Clear();
+        RefreshTranslatorState();
+        RefreshOcrLanguages();
+
+        if (OcrModelKey(previousSource) != OcrModelKey(_translationOptions.Source))
+        {
+            ReplaceOcrEngine();
+        }
+
+        _ = WarmUpTranslatorAsync();
     }
 
     /// <summary>
@@ -2741,7 +2900,8 @@ private void StartHotkey()
             var result = await ActiveTranslator
                 .TranslateAsync(new TranslationRequest(source)
                 {
-                    TargetLanguage = _translationOptions.TargetLanguage,
+                    TargetLanguage = _translationOptions.Main,
+                    SourceLanguage = _translationOptions.Source,
                 })
                 .ConfigureAwait(true);
 
@@ -2872,7 +3032,7 @@ private void StartHotkey()
 
             StatusText.Text = "OCR 実行中…";
             var (image, options, offsetX, offsetY) = PrepareForOcr(frame);
-            var result = await _ocrEngine.RecognizeAsync(image).ConfigureAwait(true);
+            var result = await RecognizeAsync(image).ConfigureAwait(true);
 
             // 翻訳と同じ単位（読み順 → 行結合）で重ねる。
             // ここだけ生の OCR 行を重ねていると、札の大きさや折り返しを確かめたいときに
@@ -3048,7 +3208,7 @@ private void StartHotkey()
                 ? PrepareForOcr(frame, region)
                 : PrepareForOcr(frame, useRegion: false);
 
-            var ocr = await _ocrEngine.RecognizeAsync(image).ConfigureAwait(true);
+            var ocr = await RecognizeAsync(image).ConfigureAwait(true);
 
             // 読み順に並べてから渡す。崩れた順で渡すと文脈が壊れて訳が悪くなる。
             var lines = TextAggregator.InReadingOrder(
@@ -3081,7 +3241,8 @@ private void StartHotkey()
                     blocks,
                     FallbackTranslator,
                     _translationCache,
-                    _translationOptions.TargetLanguage)
+                    _translationOptions.Main,
+                    _translationOptions.Source)
                 .ConfigureAwait(true);
 
             // FR-OVL-10: かかった時間を覚える。隅の表示は次の RecordUsage で使用量と一緒に更新される。
@@ -3097,14 +3258,18 @@ private void StartHotkey()
             if (!translated.Translation.IsSuccess)
             {
                 overlay.ShowMessage(
-                    $"翻訳できませんでした: {ShortOutcome(translated.Translation.Outcome)}",
+                    FailureMessage(translated.Translation.Outcome),
                     bounds, frame.Width, frame.Height, keepVisibleFor);
             }
             else if (overlayLines.Count == 0)
             {
-                // 数値だけの画面や、既に日本語の画面。何も重ねないと「効いていない」と区別できない。
+                // 数値だけの画面や、原文の言語の行が無い画面。何も重ねないと「効いていない」と区別できない。
+                // 原文の言語の行が 1 つも無いなら、設定がゲームと合っていない見込みが高い。
                 overlay.ShowMessage(
-                    "訳す必要のある文字はありませんでした", bounds, frame.Width, frame.Height, keepVisibleFor);
+                    translated.SentCount == 0 && translated.OtherLanguageCount > 0
+                        ? $"{Languages.NameOf(_translationOptions.Source)}の文字はありませんでした（原文の言語の設定を確かめてください）"
+                        : "訳す必要のある文字はありませんでした",
+                    bounds, frame.Width, frame.Height, keepVisibleFor);
             }
             else
             {
@@ -3163,9 +3328,28 @@ private void StartHotkey()
         TranslationOutcome.Busy => "翻訳サービスが混雑しています（時間をおくと戻ります）",
         TranslationOutcome.ServiceError => "翻訳サービスがエラーを返しました",
         TranslationOutcome.Blocked => "翻訳が拒否されました",
-        TranslationOutcome.Unsupported => "この言語には同梱のモデルが対応していません",
+        TranslationOutcome.Unsupported => "この組み合わせはローカルでは訳せません",
         _ => outcome.ToString(),
     };
+
+    /// <summary>
+    /// ゲームの上に出す、翻訳できなかった理由。
+    /// </summary>
+    /// <remarks>
+    /// <b>「クラウドのみ」の組み合わせでは、そのことを添える</b>（RULES.md 🟡-6）。
+    /// ほかの組み合わせではクラウドが失敗してもローカルへ切り替わるため、
+    /// 理由だけでは「なぜ今回は切り替わらないのか」が分からない。
+    /// </remarks>
+    private string FailureMessage(TranslationOutcome outcome)
+    {
+        var message = $"翻訳できませんでした: {ShortOutcome(outcome)}";
+        var source = _translationOptions.Source;
+        var main = _translationOptions.Main;
+
+        return Languages.Availability(source, main) == PairAvailability.CloudOnly
+            ? $"{message}\n{Languages.PairName(source, main)}はクラウド翻訳でのみ訳せます"
+            : message;
+    }
 
     /// <summary>
     /// オーバーレイに重ねる行を作る（FR-TRN-08 の「原文併記」）。
@@ -3258,7 +3442,15 @@ private void StartHotkey()
     {
         var translation = translated.Translation;
         var statuses = translated.Statuses;
-        var skipped = source.Where((_, i) => statuses[i] == LineTranslationStatus.Skipped).Select(l => l.Text);
+        var skipped = source
+            .Select((l, i) => statuses[i] switch
+            {
+                LineTranslationStatus.Skipped => l.Text,
+                LineTranslationStatus.OtherLanguage => $"{l.Text}（原文の言語と違う）",
+                _ => null,
+            })
+            .OfType<string>();
+        var symbolOnly = statuses.Count(s => s == LineTranslationStatus.Skipped);
 
         // 結合したブロックには元の行数を付ける。繋ぎすぎていれば一覧で気付ける。
         var pairs = source
@@ -3293,7 +3485,9 @@ private void StartHotkey()
                 $"検出           : {detectedCount} 行",
                 $"行結合         : {detectedCount} 行 → {source.Count} 件"
                     + $"（{source.Count(l => l.SourceLineCount > 1)} 件が結合・FR-TRN-10）",
-                $"翻訳に回した   : {translated.SentCount} 件（数値・記号だけの {source.Count - translated.SentCount} 件は除外）"
+                $"言語           : {Languages.PairName(_translationOptions.Source, _translationOptions.Main)}",
+                $"翻訳に回した   : {translated.SentCount} 件（数値・記号だけの {symbolOnly} 件"
+                    + $"・原文の言語と違う {translated.OtherLanguageCount} 件は除外）"
                     + (translated.CachedCount > 0
                         ? $" / うち {translated.CachedCount} 件は記憶から（FR-TRN-09）"
                         : string.Empty),

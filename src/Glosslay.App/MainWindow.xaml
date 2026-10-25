@@ -40,6 +40,10 @@
             <Setter Property="FontSize" Value="11" />
             <Setter Property="Margin" Value="0,4,0,0" />
         </Style>
+        <!-- 選ぶ前に知っておくべきこと（精度が大きく下がる・キーが要る）。Hint と同じ形で色だけ変える。 -->
+        <Style x:Key="Warning" TargetType="TextBlock" BasedOn="{StaticResource Hint}">
+            <Setter Property="Foreground" Value="#B24400" />
+        </Style>
         <Style x:Key="FieldLabel" TargetType="TextBlock">
             <Setter Property="FontSize" Value="11" />
             <Setter Property="Margin" Value="0,8,0,2" />
@@ -155,11 +159,20 @@
 
                         <GroupBox Header="翻訳">
                             <StackPanel>
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="訳文の言語"
+                                <!-- メイン言語（FR-SYS-03）はアプリ全体で 1 つ。原文の言語（FR-OCR-02）はゲームごと（プロファイル）。 -->
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="メイン言語（訳文の言語）"
                                            Margin="0,0,0,2" />
-                                <ComboBox x:Name="TargetLanguageCombo" DisplayMemberPath="DisplayName"
-                                          SelectionChanged="OnTargetLanguageChanged" />
-                                <TextBlock x:Name="TargetLanguageNote" Style="{StaticResource Hint}" Text="" />
+                                <ComboBox x:Name="MainLanguageCombo" DisplayMemberPath="DisplayName"
+                                          AutomationProperties.Name="メイン言語"
+                                          SelectionChanged="OnMainLanguageChanged" />
+                                <TextBlock Style="{StaticResource Hint}"
+                                           Text="訳文はこの言語で出します。アプリ全体の設定です（ゲームごとには変わりません）。" />
+
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="原文の言語（ゲームの言語）" />
+                                <ComboBox x:Name="SourceLanguageCombo" DisplayMemberPath="DisplayName"
+                                          AutomationProperties.Name="原文の言語"
+                                          SelectionChanged="OnSourceLanguageChanged" />
+                                <TextBlock x:Name="PairNote" Style="{StaticResource Hint}" Text="" />
 
                                 <TextBlock Style="{StaticResource FieldLabel}" Text="使うバックエンド" />
                                 <RadioButton x:Name="BackendAutoRadio" GroupName="Backend"
@@ -173,6 +186,8 @@
                                              Content="ローカルのみ（キーがあっても使わない）" />
                                 <TextBlock Style="{StaticResource Hint}"
                                            Text="「クラウドのみ」は、質の落ちた訳が黙って出るより「今は訳せない」と分かる方がよい場合に選びます。" />
+                                <TextBlock x:Name="BackendNote" Style="{StaticResource Warning}" Text=""
+                                           Visibility="Collapsed" />
 
                                 <TextBlock Style="{StaticResource FieldLabel}" Text="APIキー" />
                                 <!-- PasswordBox にしているのは、画面に出さないため。
@@ -200,12 +215,7 @@
                                              Checked="OnOcrEngineChanged" />
                                 <TextBlock x:Name="OcrEngineNote" Style="{StaticResource Hint}" Text="" />
 
-                                <StackPanel x:Name="OcrLanguagePanel" Visibility="Collapsed">
-                                    <TextBlock Style="{StaticResource FieldLabel}" Text="原文の言語" />
-                                    <ComboBox x:Name="OcrLanguageCombo"
-                                              SelectionChanged="OnOcrLanguageChanged" />
-                                </StackPanel>
-
+                                <!-- 高速モードで読む言語は、翻訳の欄の「原文の言語」に合わせる（2026-10-25）。 -->
                                 <TextBlock x:Name="OcrLanguageNote" Style="{StaticResource Hint}" Text="" />
                                 <Button Content="言語を追加する設定を開く" Click="OnOpenLanguageSettingsClick"
                                         Margin="0,6,0,0" />

@@ -4,10 +4,16 @@ namespace Glosslay.Translation;
 /// <param name="Text">原文。OCR の行を結合したもの（FR-TRN-10。結合自体は未実装 = PoC の範囲外）。</param>
 public sealed record TranslationRequest(string Text)
 {
-    /// <summary>訳文の言語。BCP 47。</summary>
+    /// <summary>訳文の言語（メイン言語）。BCP 47。</summary>
     public string TargetLanguage { get; init; } = "ja";
 
-    /// <summary>原文の言語。<c>null</c> なら自動判定に任せる（FR-OCR-02 の言語自動判定と同じ思想）。</summary>
+    /// <summary>
+    /// 原文の言語（利用者が選んだもの — FR-OCR-02）。
+    /// </summary>
+    /// <remarks>
+    /// <b>自動判別はしない</b>（2026-10-25 人間の判断）。ローカルNMT は <c>null</c> なら訳さずに理由を返す。
+    /// クラウドは指示文に原文の言語を書く（<c>LineTranslation.BuildRequestText</c>）。
+    /// </remarks>
     public string? SourceLanguage { get; init; }
 }
 
@@ -58,12 +64,12 @@ public enum TranslationOutcome
     Blocked,
 
     /// <summary>
-    /// 原文の言語に対応していない。
+    /// この組み合わせ（原文の言語→メイン言語）に対応していない。
     /// </summary>
     /// <remarks>
     /// <b>フォールバックの対象ではない。</b>切り替えても同じ結果になる。
-    /// ローカルNMT は英→日のみのため、中国語の原文はここになる
-    /// （RULES.md 🟡-1 の承認済みの例外）。
+    /// ローカルNMT では「クラウドのみ」の組み合わせ（韓国語が入るもの — RULES.md 🟡-1 の表）や、
+    /// 原文の言語の行が 1 つも無い場合がここになる。
     /// </remarks>
     Unsupported,
 }

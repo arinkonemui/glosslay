@@ -66,4 +66,30 @@
     </None>
   </ItemGroup>
 
+  <!--
+    日→英のモデル（2026-10-25 追加）を models\nmt\ja-en へ複製する。LocalNmtOptions.JapaneseToEnglishModelDirectory の既定と一致させてある。
+    日本語の原文を訳すのに使う（メイン言語が英語なら日→英、中国語なら日→英→中の 1 段目）。無くても他の翻訳は動く。
+    変換は tools/nmt-convert（convert.py Mitsua/elan-mt-bt-ja-en out/elan-ja-en）。CC BY-SA 4.0。
+  -->
+  <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)..\..\tools\nmt-convert\out\elan-ja-en\int8')">
+    <None Include="..\..\tools\nmt-convert\out\elan-ja-en\int8\*.onnx;..\..\tools\nmt-convert\out\elan-ja-en\int8\*.spm;..\..\tools\nmt-convert\out\elan-ja-en\int8\vocab.json">
+      <Link>models\nmt\ja-en\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
+    </None>
+  </ItemGroup>
+
+  <!--
+    英→中のモデル（2026-10-25 追加）を models\nmt\en-zh へ複製する。LocalNmtOptions.EnglishToChineseModelDirectory の既定と一致させてある。
+    中国語（簡体字）へ訳すのに使う（英→中と、日→英→中の 2 段目）。無くても他の翻訳は動く。
+    変換は tools/nmt-convert（convert.py Helsinki-NLP/opus-mt-en-zh out/opus-en-zh）。Apache 2.0。
+  -->
+  <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)..\..\tools\nmt-convert\out\opus-en-zh\int8')">
+    <None Include="..\..\tools\nmt-convert\out\opus-en-zh\int8\*.onnx;..\..\tools\nmt-convert\out\opus-en-zh\int8\*.spm;..\..\tools\nmt-convert\out\opus-en-zh\int8\vocab.json">
+      <Link>models\nmt\en-zh\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
+    </None>
+  </ItemGroup>
+
 </Project>

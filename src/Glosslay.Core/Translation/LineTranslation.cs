@@ -17,6 +17,14 @@ public enum LineTranslationStatus
     /// <summary>数値・記号だけ等で、翻訳に回していない。重ねない。</summary>
     Skipped,
 
+    /// <summary>
+    /// 原文の言語で書かれていない行（例: 中国語のゲームにある英語のメニュー）。翻訳に回していない。重ねない。
+    /// </summary>
+    /// <remarks>
+    /// <b>クラウドにも送らない</b>（2026-10-25 人間の判断 / FR-TRN-02）。利用量も減る（RULES.md 🟡-8）。
+    /// </remarks>
+    OtherLanguage,
+
     /// <summary>翻訳に回したが、応答から対応が取れなかった（または翻訳自体が失敗した）。重ねない。</summary>
     Unmapped,
 }
@@ -92,7 +100,11 @@ public sealed record LineTranslationResult(
     public int CallCount { get; init; }
 
     /// <summary>翻訳に回した行の数。</summary>
-    public int SentCount => Statuses.Count(s => s != LineTranslationStatus.Skipped);
+    public int SentCount =>
+        Statuses.Count(s => s is not (LineTranslationStatus.Skipped or LineTranslationStatus.OtherLanguage));
+
+    /// <summary>原文の言語で書かれていないため、翻訳に回さなかった行の数。</summary>
+    public int OtherLanguageCount => Statuses.Count(s => s == LineTranslationStatus.OtherLanguage);
 
     /// <summary>応答から対応が取れた行の数（訳文が原文と同じだった行を含む）。</summary>
     public int MappedCount =>
@@ -136,7 +148,11 @@ public static partial class LineTranslation
     /// 訳文の使い回し（FR-TRN-09 / RULES.md 🟡-8）。<c>null</c> なら使わない。
     /// <b>覚えているブロックは依頼から外す。</b>全部覚えていれば呼び出し自体を行わない。
     /// </param>
-    /// <param name="targetLanguage">訳文の言語。</param>
+    /// <param name="targetLanguage">訳文の言語（メイン言語）。</param>
+    /// <param name="sourceLanguage">
+    /// 原文の言語（FR-OCR-02）。<b>この言語で書かれていない行は送らない</b>
+    /// （<see cref="LineTranslationStatus.OtherLanguage"/>）。<c>null</c> なら言語では絞らない。
+    /// </param>
     /// <param name="cancellationToken">キャンセル。</param>
     public static async Task<LineTranslationResult> TranslateAsync(
         ITranslator translator,
@@ -144,6 +160,7 @@ public static partial class LineTranslation
         ITranslator? fallback = null,
         TranslationCache? cache = null,
         string targetLanguage = "ja",
+        string? sourceLanguage = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(translator);
@@ -156,13 +173,18 @@ public static partial class LineTranslation
         var sent = new List<int>(lines.Count);
         for (var i = 0; i < lines.Count; i++)
         {
-            if (NeedsTranslation(lines[i].Text))
+            if (!NeedsTranslation(lines[i].Text))
             {
-                sent.Add(i);
+                statuses[i] = LineTranslationStatus.Skipped;
+            }
+            else if (sourceLanguage is not null && !Languages.IsWrittenIn(lines[i].Text, sourceLanguage))
+            {
+                // 原文の言語で書かれていない行は訳さない。クラウドにも送らない（FR-TRN-02）。
+                statuses[i] = LineTranslationStatus.OtherLanguage;
             }
             else
             {
-                statuses[i] = LineTranslationStatus.Skipped;
+                sent.Add(i);
             }
         }
 
@@ -208,7 +230,7 @@ public static partial class LineTranslation
         else
         {
             var asked = ask.Select(n => sources[n]).ToList();
-            var attempt = await SendAsync(translator, asked, targetLanguage, cancellationToken)
+            var attempt = await SendAsync(translator, asked, targetLanguage, sourceLanguage, cancellationToken)
                 .ConfigureAwait(false);
             calls++;
 
@@ -216,7 +238,7 @@ public static partial class LineTranslation
             // キー未登録と非対応は切り替えても同じ結果になるため含めない（ShouldFallBack）。
             if (fallback is not null && attempt.Result.ShouldFallBack)
             {
-                var second = await SendAsync(fallback, asked, targetLanguage, cancellationToken)
+                var second = await SendAsync(fallback, asked, targetLanguage, sourceLanguage, cancellationToken)
                     .ConfigureAwait(false);
                 calls++;
 
@@ -291,7 +313,7 @@ public static partial class LineTranslation
     /// フォールバック先へ渡すときは、ここから組み立て直す必要がある。
     /// </remarks>
     private static async Task<(TranslationResult Result, string?[] Translated)> SendAsync(
-        ITranslator translator, List<string> sources, string targetLanguage,
+        ITranslator translator, List<string> sources, string targetLanguage, string? sourceLanguage,
         CancellationToken cancellationToken)
     {
         // NMT は 1 行を 1 行に訳すので、そのまま渡して行数で対応づける。
@@ -299,9 +321,10 @@ public static partial class LineTranslation
         var request = new TranslationRequest(
             translator.TranslatesLineByLine
                 ? string.Join('\n', sources)
-                : BuildRequestText(sources))
+                : BuildRequestText(sources, sourceLanguage, targetLanguage))
         {
             TargetLanguage = targetLanguage,
+            SourceLanguage = sourceLanguage,
         };
 
         var result = await translator.TranslateAsync(request, cancellationToken).ConfigureAwait(false);
@@ -361,6 +384,9 @@ public static partial class LineTranslation
     /// <para>形式の指示を<b>システム指示ではなく本文側</b>に書いている。
     /// システム指示は gemini.json で利用者が上書きできるため、そこに頼ると
     /// 古い設定ファイルを持つ環境で番号が返らなくなる。</para>
+    /// <para><b>原文の言語と訳文の言語を本文に書く</b>（2026-10-25）。システム指示の <c>{target}</c> は
+    /// gemini.json で上書きされうるうえ、原文の言語は書かれていない。以前は「自然な日本語」と
+    /// 訳先を日本語に決め打ちしていた（メイン言語が日本語だけだった頃の名残）。</para>
     /// <para><b>番号の数は守らせるが、意味は行をまたいで振り分けさせる。</b>
     /// 以前は「番号ごとに対応する部分だけを訳す」と指示していたため、OCR が
     /// <c>…whenever you land after being</c> / <c>airborne</c> と割った文が
@@ -371,15 +397,23 @@ public static partial class LineTranslation
     /// 「数値を必ず残す」は、振り分けの途中で数値が落ちるのを防ぐため（RULES.md 🟡-7）。
     /// システム指示にも同じ規則があるが、gemini.json で上書きされうるので本文側でも念を押す。</para>
     /// </remarks>
-    public static string BuildRequestText(IReadOnlyList<string> lines)
+    /// <param name="lines">原文の行。</param>
+    /// <param name="sourceLanguage">原文の言語。<c>null</c> なら書かない。</param>
+    /// <param name="targetLanguage">訳文の言語（メイン言語）。</param>
+    public static string BuildRequestText(
+        IReadOnlyList<string> lines, string? sourceLanguage = null, string targetLanguage = "ja")
     {
         ArgumentNullException.ThrowIfNull(lines);
+        ArgumentNullException.ThrowIfNull(targetLanguage);
 
+        var target = Languages.NameOf(targetLanguage);
         var builder = new StringBuilder();
-        builder.AppendLine("次の各行を翻訳してください。");
+        builder.AppendLine(sourceLanguage is { Length: > 0 }
+            ? string.Concat("次の各行を", Languages.NameOf(sourceLanguage), "から", target, "へ翻訳してください。")
+            : string.Concat("次の各行を", target, "へ翻訳してください。"));
         builder.AppendLine("各行の先頭の [番号] は必ずそのまま残し、1 つの番号につき 1 行で、同じ形式で出力してください。番号を増やしたり減らしたりしないでください。");
         builder.AppendLine("これは画面の文字を読み取ったもので、1 つの文が途中で改行され、続けて並んだ複数の番号に分かれていることがあります。");
-        builder.AppendLine("その場合は文全体の意味で訳したうえで、上の番号から順に読んで自然な日本語になるよう、訳文を各番号に振り分けてください。どの番号も空にしないでください。");
+        builder.AppendLine(CultureInfo.InvariantCulture, $"その場合は文全体の意味で訳したうえで、上の番号から順に読んで自然な{target}になるよう、訳文を各番号に振り分けてください。どの番号も空にしないでください。");
         builder.AppendLine("振り分けても、原文の数値は必ずいずれかの番号の訳文に残してください。");
         builder.AppendLine("見出しと説明文のように別々の項目は、1 つの文として扱わないでください。");
         builder.AppendLine();

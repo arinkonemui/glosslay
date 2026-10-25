@@ -121,6 +121,12 @@ internal static class Program
             return await CheckChineseAsync(options).ConfigureAwait(false);
         }
 
+        // --pairs: 2026-10-25 に足した組み合わせ（日→英 / 英→中 / 日→英→中）を実際のモデルで確かめる。
+        if (args.Contains("--pairs", StringComparer.Ordinal))
+        {
+            return await CheckPairsAsync(options).ConfigureAwait(false);
+        }
+
         using var translator = new LocalNmtTranslator(options);
 
         // --selection: 選択の規則を表のまま検査する。翻訳しない。
@@ -142,7 +148,7 @@ internal static class Program
             return CheckProfiles();
         }
 
-        // --languages: 訳文の言語の扱い（FR-CFG-01 / FR-TRN-03）を確かめる。モデルを読まない。
+        // --languages: メイン言語と原文の言語の扱い（FR-SYS-03 / FR-OCR-02 / FR-TRN-02・03）を確かめる。モデルを読まない。
         if (args.Contains("--languages", StringComparer.Ordinal))
         {
             return await CheckLanguagesAsync().ConfigureAwait(false);
@@ -262,34 +268,45 @@ internal static class Program
         using var cloud = new Stub("クラウド", configured: true);
         using var cloudNoKey = new Stub("クラウド", configured: false);
         using var local = new Stub("ローカル", configured: true);
-        using var localNoModel = new Stub("ローカル", configured: false);
 
-        (string Label, TranslationBackendChoice Choice, Stub Cloud, Stub Local,
+        const LocalReadiness ready = LocalReadiness.Ready;
+        const LocalReadiness noModel = LocalReadiness.ModelMissing;
+        const LocalReadiness cloudOnlyPair = LocalReadiness.CloudOnlyPair;
+
+        (string Label, TranslationBackendChoice Choice, Stub Cloud, LocalReadiness Readiness,
             string Active, string Fallback)[] cases =
         [
-            ("自動・キーあり",        TranslationBackendChoice.Auto,      cloud,      local,        "クラウド", "ローカル"),
-            ("自動・キーなし",        TranslationBackendChoice.Auto,      cloudNoKey, local,        "ローカル", "なし"),
-            ("自動・モデルなし",      TranslationBackendChoice.Auto,      cloud,      localNoModel, "クラウド", "なし"),
-            ("クラウドのみ・キーあり", TranslationBackendChoice.CloudOnly, cloud,      local,        "クラウド", "なし"),
-            ("クラウドのみ・キーなし", TranslationBackendChoice.CloudOnly, cloudNoKey, local,        "クラウド", "なし"),
-            ("ローカルのみ・キーあり", TranslationBackendChoice.LocalOnly, cloud,      local,        "ローカル", "なし"),
+            ("自動・キーあり",                 TranslationBackendChoice.Auto,      cloud,      ready,         "クラウド", "ローカル"),
+            ("自動・キーなし",                 TranslationBackendChoice.Auto,      cloudNoKey, ready,         "ローカル", "なし"),
+            ("自動・モデルなし",               TranslationBackendChoice.Auto,      cloud,      noModel,       "クラウド", "なし"),
+            ("自動・キーもモデルもなし",       TranslationBackendChoice.Auto,      cloudNoKey, noModel,       "ローカル", "なし"),
+            ("クラウドのみ・キーあり",         TranslationBackendChoice.CloudOnly, cloud,      ready,         "クラウド", "なし"),
+            ("クラウドのみ・キーなし",         TranslationBackendChoice.CloudOnly, cloudNoKey, ready,         "クラウド", "なし"),
+            ("ローカルのみ・キーあり",         TranslationBackendChoice.LocalOnly, cloud,      ready,         "ローカル", "なし"),
+
+            // 2026-10-25: 「クラウドのみ」の組み合わせ（韓国語が入るもの）。自動でもクラウドで、切り替えない。
+            ("自動・キーあり・クラウドのみ組", TranslationBackendChoice.Auto,      cloud,      cloudOnlyPair, "クラウド", "なし"),
+            ("自動・キーなし・クラウドのみ組", TranslationBackendChoice.Auto,      cloudNoKey, cloudOnlyPair, "クラウド", "なし"),
+
+            // 「ローカルのみ」は外へ送らないことを選んだ人の選択。勝手にクラウドへ送らない（ローカルが理由を返す）。
+            ("ローカルのみ・クラウドのみ組",   TranslationBackendChoice.LocalOnly, cloud,      cloudOnlyPair, "ローカル", "なし"),
         ];
 
         Console.WriteLine("=== バックエンドの選択 ===");
-        Console.WriteLine($"  {"場合",-22} {"使う",-10} {"切替先",-10} 判定");
+        Console.WriteLine($"  {"場合",-26} {"使う",-10} {"切替先",-10} 判定");
 
         var failures = 0;
-        foreach (var (label, choice, c, l, wantActive, wantFallback) in cases)
+        foreach (var (label, choice, c, readiness, wantActive, wantFallback) in cases)
         {
-            var active = TranslatorSelection.Active(choice, c, l).Name;
-            var fallback = TranslatorSelection.Fallback(choice, c, l)?.Name ?? "なし";
+            var active = TranslatorSelection.Active(choice, c, local, readiness).Name;
+            var fallback = TranslatorSelection.Fallback(choice, c, local, readiness)?.Name ?? "なし";
             var ok = active == wantActive && fallback == wantFallback;
             if (!ok)
             {
                 failures++;
             }
 
-            Console.WriteLine($"  {label,-22} {active,-10} {fallback,-10} "
+            Console.WriteLine($"  {label,-26} {active,-10} {fallback,-10} "
                               + (ok ? "OK" : $"★ 期待 {wantActive} / {wantFallback}"));
         }
 
@@ -482,16 +499,14 @@ internal static class Program
     }
 
     /// <summary>
-    /// 訳文の言語の扱いを確かめる（FR-CFG-01 の「言語」/ FR-TRN-03）。
+    /// メイン言語と原文の言語の扱いを確かめる（FR-SYS-03 / FR-OCR-02 / FR-TRN-02・03 / RULES.md 🟡-1）。
     /// </summary>
     /// <remarks>
     /// <para><b>一番危ないのは「訳せないのに成功して返る」こと。</b>
-    /// 同梱のモデルは英→日のみなので、英語を選んで訳させると
-    /// <b>日本語が出て、しかも成功として返りうる</b>。画面の表示だけで防ぐと、
-    /// 設定ファイルを手で書き換えた場合に素通りする。</para>
+    /// ローカルのモデルに違う言語を入れると、<b>流暢な出鱈目が出て、しかも成功として返りうる</b>。
+    /// 画面の表示だけで防ぐと、設定ファイルを手で書き換えた場合に素通りする。</para>
     /// <para><b>モデルを読まない。</b>存在しないモデル置き場を渡し、
-    /// 言語の判定がモデルの有無より<b>先に</b>働くことを使って確かめる。
-    /// 日本語なら「モデルが無い」で止まり、英語なら「対応していない」で止まる。</para>
+    /// 組み合わせの判定がモデルの有無より<b>先に</b>働くことを使って確かめる。</para>
     /// </remarks>
     private static async Task<int> CheckLanguagesAsync()
     {
@@ -507,112 +522,230 @@ internal static class Program
             Console.WriteLine($"  {(ok ? "  " : "★ ")}{label,-44} {(ok ? "OK" : "NG"),-4}{detail}");
         }
 
-        Console.WriteLine("=== 選択肢（FR-CFG-01）===");
-        Check("既定は日本語", TargetLanguages.All[0].Tag == TargetLanguages.Default);
-        Check("日本語はキー無しで訳せる", TargetLanguages.LocalSupports("ja"));
-        Check("英語もキー無しで訳せる（中国語の原文だけ）", TargetLanguages.LocalSupports("en"));
+        Console.WriteLine("=== 選択肢（FR-SYS-03 / FR-OCR-02）===");
+        Check("メイン言語の既定は日本語", Languages.MainOptions[0].Tag == Languages.DefaultMain && Languages.DefaultMain == "ja");
         Check(
-            "ローカルで訳せる訳先は日本語と英語だけ",
-            TargetLanguages.All.Count(o => o.LocalSupported) == 2,
-            $"← 全 {TargetLanguages.All.Count} 件");
-        Check(
-            "英語へ訳せる原文は中国語だけと言う",
-            TargetLanguages.Find("en")?.LocalSources == "中国語",
-            $"← {TargetLanguages.Find("en")?.LocalSources}");
-        Check("大小を無視して引ける", TargetLanguages.LocalSupports("JA"));
-        Check("知らないタグは訳せない扱い", !TargetLanguages.LocalSupports("de"));
-        Check("知らないタグはそのまま表示する", TargetLanguages.DisplayNameOf("de") == "de");
+            "メイン言語は 日本語 / English / 简体中文 / 한국어",
+            string.Join("/", Languages.MainOptions.Select(o => o.DisplayName)) == "日本語/English/简体中文/한국어",
+            $"← {string.Join("/", Languages.MainOptions.Select(o => o.DisplayName))}");
+        Check("繁体字はメイン言語に無い（2026-10-24）", !Languages.MainOptions.Any(o => o.Tag.Contains("Hant", StringComparison.Ordinal)));
+        Check("以前の zh-Hant は簡体字として読む", Languages.NormalizeMain("zh-Hant") == "zh-Hans");
+        Check("メイン言語が空なら日本語", Languages.NormalizeMain(null) == "ja");
+        Check("知らないメイン言語は捨てない", Languages.NormalizeMain("de") == "de");
+        Check("原文の既定は英語", Languages.NormalizeSource(null, "ja") == "en" && Languages.NormalizeSource(null, "ko") == "en");
+        Check("メイン言語が英語なら原文の既定は日本語", Languages.NormalizeSource(null, "en") == "ja");
+        Check("原文がメイン言語と同じなら既定に戻す", Languages.NormalizeSource("en", "en") == "ja");
+        Check("中国語の原文は簡体・繁体を問わない", Languages.NormalizeSource("zh-Hant", "ja") == "zh");
 
         Console.WriteLine();
-        Console.WriteLine("=== ローカルが断るか（FR-TRN-03）===");
+        Console.WriteLine("=== 組み合わせの表（RULES.md 🟡-1）===");
+
+        var local = PairAvailability.Local;
+        var low = PairAvailability.LocalLowQuality;
+        var cloudOnly = PairAvailability.CloudOnly;
+        (string Source, string Main, PairAvailability Want)[] table =
+        [
+            ("en", "ja", local), ("zh", "ja", local), ("ko", "ja", cloudOnly),
+            ("ja", "en", local), ("zh", "en", local), ("ko", "en", cloudOnly),
+            ("ja", "zh-Hans", low), ("en", "zh-Hans", local), ("ko", "zh-Hans", cloudOnly),
+            ("ja", "ko", cloudOnly), ("en", "ko", cloudOnly), ("zh", "ko", cloudOnly),
+            ("ja", "ja", PairAvailability.Same), ("zh", "zh-Hans", PairAvailability.Same),
+            ("en", "de", cloudOnly),
+        ];
+
+        foreach (var (source, main, want) in table)
+        {
+            var got = Languages.Availability(source, main);
+            Check($"{Languages.PairName(source, main)} は {want}", got == want, got == want ? string.Empty : $"← {got}");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("=== 原文の言語の行か（違う言語の行は訳さない・クラウドにも送らない）===");
+        Check("英語の行は英語", Languages.IsWrittenIn("Attack Power", "en") && !Languages.IsWrittenIn("Attack Power", "ja"));
+        Check("かなの行は日本語で、中国語ではない", Languages.IsWrittenIn("ゲームを始める", "ja") && !Languages.IsWrittenIn("ゲームを始める", "zh"));
+        Check("漢字だけの行は日本語でも中国語でもありうる", Languages.IsWrittenIn("設定", "ja") && Languages.IsWrittenIn("設定", "zh"));
+        Check("簡体字の行は中国語で、英語ではない", Languages.IsWrittenIn("系统设置", "zh") && !Languages.IsWrittenIn("系统设置", "en"));
+        Check("読み違いのカタカナ 1 文字なら中国語のまま", Languages.IsWrittenIn("攻击カ +25", "zh"));
+        Check("かなが 2 文字以上なら中国語ではない", !Languages.IsWrittenIn("プログラムから開く", "zh"));
+        Check("ハングルの行は韓国語で、日本語・中国語ではない",
+            Languages.IsWrittenIn("공격력", "ko") && !Languages.IsWrittenIn("공격력", "ja") && !Languages.IsWrittenIn("공격력", "zh"));
+        Check("英字まじりの韓国語の行も韓国語", Languages.IsWrittenIn("[길드] Player01: ㅋㅋㅋ 고마워요", "ko"));
+        Check("韓国語のゲームの英語の行は韓国語ではない", !Languages.IsWrittenIn("HP 1,250 / MP 300", "ko"));
+        Check("空行はどの言語でもない", !Languages.IsWrittenIn("  ", "en"));
+
+        Console.WriteLine();
+        Console.WriteLine("=== ローカルが断るか（FR-TRN-02 / 03）===");
 
         // 実在しない置き場。モデルを読まずに判定の順序だけを見る。
+        var nowhere = Path.Combine(Path.GetTempPath(), "glosslay-no-such-model");
         var noModel = new LocalNmtOptions
         {
-            ModelDirectory = Path.Combine(Path.GetTempPath(), "glosslay-no-such-model"),
+            ModelDirectory = nowhere,
+            ChineseModelDirectory = nowhere,
+            JapaneseToEnglishModelDirectory = nowhere,
+            EnglishToChineseModelDirectory = nowhere,
         };
 
-        using var local = new LocalNmtTranslator(noModel);
+        using var translator = new LocalNmtTranslator(noModel);
 
-        var japanese = await local
-            .TranslateAsync(new TranslationRequest("Attack Power") { TargetLanguage = "ja" })
-            .ConfigureAwait(false);
+        Task<TranslationResult> Ask(string text, string? source, string main) =>
+            translator.TranslateAsync(new TranslationRequest(text) { SourceLanguage = source, TargetLanguage = main });
 
-        var english = await local
-            .TranslateAsync(new TranslationRequest("ダメージ") { TargetLanguage = "en" })
-            .ConfigureAwait(false);
-
-        var korean = await local
-            .TranslateAsync(new TranslationRequest("Attack Power") { TargetLanguage = "ko" })
-            .ConfigureAwait(false);
-
-        var chineseWithoutModel = await local
-            .TranslateAsync(new TranslationRequest("承让了！") { TargetLanguage = "ja" })
-            .ConfigureAwait(false);
+        var englishToJapanese = await Ask("Attack Power", "en", "ja").ConfigureAwait(false);
+        var japaneseToKorean = await Ask("ダメージ", "ja", "ko").ConfigureAwait(false);
+        var koreanToJapanese = await Ask("공격력", "ko", "ja").ConfigureAwait(false);
+        var same = await Ask("ダメージ", "ja", "ja").ConfigureAwait(false);
+        var noSource = await Ask("Attack Power", null, "ja").ConfigureAwait(false);
+        var chineseToEnglish = await Ask("承让了！", "zh", "en").ConfigureAwait(false);
 
         Check(
-            "日本語は言語では断らない",
-            japanese.Outcome == TranslationOutcome.NotConfigured,
-            $"← {japanese.Outcome}（モデルが無いので止まる）");
+            "ローカルの組み合わせは、モデルが無いとそう言って止まる",
+            englishToJapanese.Outcome == TranslationOutcome.NotConfigured
+            && englishToJapanese.Message?.Contains("英語→日本語", StringComparison.Ordinal) == true,
+            $"← {englishToJapanese.Outcome} {englishToJapanese.Message}");
         Check(
-            "訳先が韓国語ならモデルの有無より先に断る",
-            korean.Outcome == TranslationOutcome.Unsupported,
-            $"← {korean.Outcome}");
+            "韓国語へはモデルの有無より先に断る",
+            japaneseToKorean.Outcome == TranslationOutcome.Unsupported
+            && japaneseToKorean.Message?.Contains("クラウド翻訳でのみ", StringComparison.Ordinal) == true,
+            $"← {japaneseToKorean.Outcome} {japaneseToKorean.Message}");
+        Check("韓国語の原文も断る", koreanToJapanese.Outcome == TranslationOutcome.Unsupported, $"← {koreanToJapanese.Outcome}");
+        Check("原文とメイン言語が同じなら訳さない", same.Outcome == TranslationOutcome.Unsupported, $"← {same.Outcome}");
+        Check("原文の言語が無ければ訳さない", noSource.Outcome == TranslationOutcome.Unsupported, $"← {noSource.Outcome}");
         Check(
-            "日本語の原文を英語へはローカルでは訳さない",
-            english.Outcome == TranslationOutcome.Unsupported,
-            $"← {english.Outcome}");
-        Check(
-            "断る理由を言葉で返す",
-            english.Message?.Contains("APIキー", StringComparison.Ordinal) == true,
-            $"← {english.Message}");
-        Check(
-            "中→英のモデルが無ければ、そう言って断る",
-            chineseWithoutModel.Outcome == TranslationOutcome.Unsupported
-            && chineseWithoutModel.Message?.Contains("中→英", StringComparison.Ordinal) == true,
-            $"← {chineseWithoutModel.Message}");
+            "中→英のモデルが無ければ、そう言って止まる",
+            chineseToEnglish.Outcome == TranslationOutcome.NotConfigured
+            && chineseToEnglish.Message?.Contains("中国語→英語", StringComparison.Ordinal) == true,
+            $"← {chineseToEnglish.Message}");
 
-        // FR-TRN-06: 対応していない言語では切り替えない。切り替えても同じ結果になる。
-        Check("対応しない言語では切り替えない", !english.ShouldFallBack);
+        // FR-TRN-06: 対応していない組み合わせでは切り替えない。切り替えても同じ結果になる。
+        Check("対応しない組み合わせでは切り替えない", !japaneseToKorean.ShouldFallBack);
+        Check(
+            "クラウドのみの組み合わせは、モデルがあってもローカルでは訳せない扱い",
+            translator.ReadinessFor("ja", "ko") == LocalReadiness.CloudOnlyPair
+            && translator.ReadinessFor("en", "ja") == LocalReadiness.ModelMissing);
 
         Console.WriteLine();
         Console.WriteLine("=== 行ごとの経路（LocalNmtRoutes・モデルを読まない）===");
 
-        LocalNmtRoute[] Plan(string target, params string[] lines) => LocalNmtRoutes.Plan(lines, target);
+        LocalNmtRoute[] Plan(string source, string main, params string[] lines) => LocalNmtRoutes.Plan(lines, source, main);
 
-        Check("英語 → 日本語は英→日", Plan("ja", "Attack Power")[0] == LocalNmtRoute.EnglishToJapanese);
-        Check("中国語 → 日本語は中→英→日", Plan("ja", "承让了！")[0] == LocalNmtRoute.ChineseToJapanese);
-        Check("中国語 → 英語は中→英", Plan("en", "承让了！")[0] == LocalNmtRoute.ChineseToEnglish);
-        Check("英語 → 英語は訳さない", Plan("en", "Attack Power")[0] == LocalNmtRoute.None);
-        Check("日本語 → 英語はローカルでは訳さない", Plan("en", "ダメージを与える")[0] == LocalNmtRoute.None);
-        Check("日本語 → 日本語は訳さない", Plan("ja", "ダメージを与える")[0] == LocalNmtRoute.None);
-        Check("韓国語は訳さない", Plan("ja", "공격력")[0] == LocalNmtRoute.None);
+        Check("英語 → 日本語は英→日", Plan("en", "ja", "Attack Power")[0] == LocalNmtRoute.EnglishToJapanese);
+        Check("中国語 → 日本語は中→英→日", Plan("zh", "ja", "承让了！")[0] == LocalNmtRoute.ChineseToJapanese);
+        Check("中国語 → 英語は中→英", Plan("zh", "en", "承让了！")[0] == LocalNmtRoute.ChineseToEnglish);
+        Check("日本語 → 英語は日→英", Plan("ja", "en", "ダメージを与える")[0] == LocalNmtRoute.JapaneseToEnglish);
+        Check("英語 → 中国語は英→中", Plan("en", "zh-Hans", "Attack Power")[0] == LocalNmtRoute.EnglishToChinese);
+        Check("日本語 → 中国語は日→英→中", Plan("ja", "zh-Hans", "ダメージを与える")[0] == LocalNmtRoute.JapaneseToChinese);
+        Check("韓国語が入る組み合わせは訳さない",
+            Plan("ko", "ja", "공격력")[0] == LocalNmtRoute.None && Plan("ja", "ko", "ダメージ")[0] == LocalNmtRoute.None);
         Check(
-            "かなのある画面の漢字だけの行は日本語とみなす",
-            Plan("ja", "設定", "ゲームを始める").All(r => r == LocalNmtRoute.None));
+            "原文の言語と違う行は訳さない（英語のゲームの日本語の行）",
+            Plan("en", "ja", "Attack Power", "ゲームを始める")[1] == LocalNmtRoute.None);
+        Check("原文が中国語なら漢字だけの行は中国語として訳す", Plan("zh", "ja", "設定")[0] == LocalNmtRoute.ChineseToJapanese);
+        Check("原文が日本語なら漢字だけの行は日本語として訳す", Plan("ja", "en", "設定")[0] == LocalNmtRoute.JapaneseToEnglish);
+        Check("中国語の画面のかなの行は訳さない", Plan("zh", "ja", "系统设置", "プログラムから開く")[1] == LocalNmtRoute.None);
+        Check("空行は訳さない", Plan("en", "ja", "  ")[0] == LocalNmtRoute.None);
         Check(
-            "かなの無い画面の漢字だけの行は中国語とみなす",
-            Plan("ja", "系统设置", "人物预设").All(r => r == LocalNmtRoute.ChineseToJapanese));
-        Check("空行は訳さない", Plan("ja", "  ")[0] == LocalNmtRoute.None);
-        Check(
-            "中国語の画面でも、かなが 2 文字以上の行は日本語として訳さない",
-            Plan("ja", "系统设置", "人物预设", "模组管理", "プログラムから開く")[3] == LocalNmtRoute.None);
-        Check(
-            "中国語の画面に読み違いのカタカナが 1 文字あっても中国語として訳す",
-            Plan("ja", "攻击カ +25", "系统设置", "人物预设").All(r => r == LocalNmtRoute.ChineseToJapanese));
-        Check(
-            "英語が多い画面の漢字 1 文字は訳さない（アイコンの読み違い）",
-            Plan("ja", "Attack Power", "Lightning Bolt", "木")[2] == LocalNmtRoute.None);
-        Check(
-            "中国語の画面の漢字 1 文字は訳す",
-            Plan("ja", "查", "系统设置", "人物预设")[0] == LocalNmtRoute.ChineseToJapanese);
+            "日→英→中は日→英と英→中のモデルを使う",
+            LocalNmtRoutes.ModelsOf(LocalNmtRoute.JapaneseToChinese) == (LocalNmtModel.JapaneseToEnglish, LocalNmtModel.EnglishToChinese));
 
         var split = LocalNmtRoutes.SplitChineseSentences("我没法捡起道具！请按下Q键。或使用鼠标滚轮？");
         Check("中国語は句点で区切る", split.Count == 3, $"← {string.Join(" | ", split)}");
 
+        var english = LocalNmtRoutes.SplitEnglishSentences("Cooldown: 1.5 seconds. Lv.12 required! You'll be better.");
+        Check("英語は文で区切り、小数点や Lv. では切らない", english.Count == 3, $"← {string.Join(" | ", english)}");
+        Check(
+            "区切るのは文を落とすモデル（中→英・英→中）だけ",
+            LocalNmtRoutes.SentencesFor(LocalNmtModel.EnglishToJapanese, "A. B.").Count == 1
+            && LocalNmtRoutes.SentencesFor(LocalNmtModel.JapaneseToEnglish, "あ。い。").Count == 1
+            && LocalNmtRoutes.SentencesFor(LocalNmtModel.EnglishToChinese, "A. B. C.").Count == 3);
+        Check(
+            "英→中は 2 文までなら区切らない（区切ると繰り返しが出る）",
+            LocalNmtRoutes.SentencesFor(LocalNmtModel.EnglishToChinese, "Your backpack is full. You cannot carry more.").Count == 1);
+
+        Console.WriteLine();
+        Console.WriteLine("=== 違う言語の行はクラウドにも送らない（LineTranslation）===");
+
+        // クラウド（LLM）と同じ形で依頼を受け取る。依頼文の中身を見るため。
+        using var echo = new EchoTranslator(lineByLine: false);
+        OcrLine[] screen =
+        [
+            new("系统设置", 1f, new OcrBox(0, 0, 100, 20)),
+            new("New Game", 1f, new OcrBox(0, 30, 100, 20)),
+            new("30/100", 1f, new OcrBox(0, 60, 100, 20)),
+        ];
+        var sent = await LineTranslation
+            .TranslateAsync(echo, screen, targetLanguage: "ja", sourceLanguage: "zh")
+            .ConfigureAwait(false);
+        Check(
+            "中国語のゲームの英語の行は送らない",
+            sent.Statuses[1] == LineTranslationStatus.OtherLanguage
+            && echo.LastRequest?.Text.Contains("New Game", StringComparison.Ordinal) == false,
+            $"← {string.Join(" / ", sent.Statuses)}");
+        Check("数値だけの行は今までどおり送らない", sent.Statuses[2] == LineTranslationStatus.Skipped);
+        Check("送った数・違う言語の数を数える", sent.SentCount == 1 && sent.OtherLanguageCount == 1, $"← {sent.SentCount} / {sent.OtherLanguageCount}");
+        Check(
+            "クラウドへの依頼に原文の言語を書く",
+            echo.LastRequest?.Text.Contains("中国語から日本語へ", StringComparison.Ordinal) == true
+            && echo.LastRequest?.SourceLanguage == "zh",
+            $"← {echo.LastRequest?.Text.Split('\n')[0]}");
+
+        var toChinese = LineTranslation.BuildRequestText(["Attack Power"], "en", "zh-Hans");
+        Check(
+            "訳文の中国語は簡体字と書く・日本語に決め打ちしない",
+            toChinese.Contains("英語から中国語（簡体字）へ", StringComparison.Ordinal)
+            && toChinese.Contains("自然な中国語（簡体字）", StringComparison.Ordinal)
+            && !toChinese.Contains("自然な日本語", StringComparison.Ordinal),
+            $"← {toChinese.Split('\n')[0]}");
+
+        Console.WriteLine();
+        Console.WriteLine("=== 行結合（韓国語は語を空白で区切る）===");
+
+        var korean = LineJoiner.Join(
+        [
+            new("길드에 가입하면 매일 길드 출석 보상을 받을 수", 1f, new OcrBox(0, 0, 400, 20)),
+            new("있습니다.", 1f, new OcrBox(0, 24, 90, 20)),
+        ]);
+        Check(
+            "韓国語の折り返しは空白を入れて繋ぐ",
+            korean.Count == 1 && korean[0].Text.EndsWith("받을 수 있습니다.", StringComparison.Ordinal),
+            $"← {string.Join(" | ", korean.Select(l => l.Text))}");
+
+        var japanese = LineJoiner.Join(
+        [
+            new("毎ターン最大体力の5%を回復する。その間、防御力が", 1f, new OcrBox(0, 0, 400, 20)),
+            new("上昇する。", 1f, new OcrBox(0, 24, 90, 20)),
+        ]);
+        Check(
+            "日本語の折り返しは今までどおり詰めて繋ぐ",
+            japanese.Count == 1 && japanese[0].Text.EndsWith("防御力が上昇する。", StringComparison.Ordinal),
+            $"← {string.Join(" | ", japanese.Select(l => l.Text))}");
+
         Console.WriteLine();
         Console.WriteLine(failures == 0 ? "すべて期待どおり。" : $"★ {failures} 件が期待と違う。");
         return failures == 0 ? 0 : 1;
+    }
+
+    /// <summary>依頼をそのまま覚えて、原文を返すバックエンド。送ったものを確かめるためだけに使う。</summary>
+    private sealed class EchoTranslator(bool lineByLine) : ITranslator
+    {
+        public TranslationRequest? LastRequest { get; private set; }
+
+        public string Name => "検査用（そのまま返す）";
+
+        public bool IsConfigured => true;
+
+        public bool TranslatesLineByLine => lineByLine;
+
+        public Task<TranslationResult> TranslateAsync(
+            TranslationRequest request, CancellationToken cancellationToken = default)
+        {
+            LastRequest = request;
+            return Task.FromResult(new TranslationResult(request.Text, TranslationOutcome.Succeeded, TimeSpan.Zero));
+        }
+
+        public void Dispose()
+        {
+        }
     }
 
     /// <summary>
@@ -796,7 +929,7 @@ internal static class Program
         };
 
         using var local = new LocalNmtTranslator(options);
-        if (!local.HasChineseModel)
+        if (!local.HasModel(LocalNmtModel.ChineseToEnglish))
         {
             Console.WriteLine($"中→英のモデルがありません: {options.ChineseModelDirectory}");
             Console.WriteLine("tools/nmt-convert/convert.py Helsinki-NLP/opus-mt-zh-en out/opus-zh-en で変換してください。");
@@ -816,10 +949,10 @@ internal static class Program
 
         foreach (var target in new[] { "en", "ja" })
         {
-            Console.WriteLine($"=== 中国語 → {TargetLanguages.DisplayNameOf(target)}（{(target == "ja" ? "中→英→日" : "中→英")}）===");
+            Console.WriteLine($"=== 中国語 → {Languages.NameOf(target)}（{(target == "ja" ? "中→英→日" : "中→英")}）===");
             var watch = Stopwatch.StartNew();
             var result = await local
-                .TranslateAsync(new TranslationRequest(string.Join('\n', chinese)) { TargetLanguage = target })
+                .TranslateAsync(new TranslationRequest(string.Join('\n', chinese)) { SourceLanguage = "zh", TargetLanguage = target })
                 .ConfigureAwait(false);
             var elapsed = watch.Elapsed;
             var lines = result.Text.Split('\n');
@@ -852,23 +985,14 @@ internal static class Program
             Console.WriteLine();
         }
 
-        Console.WriteLine("=== 混ざった画面（英語と中国語）→ 日本語 ===");
+        // 2026-10-25 から原文の言語を選ぶ。中国語のゲームの英語の行は訳さない（自動で見分けない）。
+        Console.WriteLine("=== 混ざった画面（英語と中国語）・原文は中国語 → 日本語 ===");
         var mixed = await local
-            .TranslateAsync(new TranslationRequest("New Game\n系统设置") { TargetLanguage = "ja" })
+            .TranslateAsync(new TranslationRequest("New Game\n系统设置") { SourceLanguage = "zh", TargetLanguage = "ja" })
             .ConfigureAwait(false);
         var mixedLines = mixed.Text.Split('\n');
-        Check("英語の行は英→日で訳す", mixedLines.Length == 2 && mixedLines[0] != "New Game", $"← {mixedLines[0]}");
+        Check("英語の行は訳さない（原文の言語と違う）", mixedLines.ElementAtOrDefault(0) == "New Game", $"← {mixedLines.ElementAtOrDefault(0)}");
         Check("中国語の行は中→英→日で訳す", mixedLines.Length == 2 && mixedLines[1] != "系统设置", $"← {mixedLines.ElementAtOrDefault(1)}");
-
-        Console.WriteLine();
-        Console.WriteLine("=== 日本語のゲームの漢字だけの行は訳さない ===");
-        var japaneseScreen = await local
-            .TranslateAsync(new TranslationRequest("設定\nゲームを始める\nAttack Power") { TargetLanguage = "ja" })
-            .ConfigureAwait(false);
-        var japaneseLines = japaneseScreen.Text.Split('\n');
-        Check("「設定」を中国語として訳さない", japaneseLines.ElementAtOrDefault(0) == "設定", $"← {japaneseLines.ElementAtOrDefault(0)}");
-        Check("かなの行も訳さない", japaneseLines.ElementAtOrDefault(1) == "ゲームを始める");
-        Check("同じ画面の英語は訳す", japaneseLines.ElementAtOrDefault(2) is { } attack && attack != "Attack Power", $"← {japaneseLines.ElementAtOrDefault(2)}");
 
         Console.WriteLine();
         Console.WriteLine(failures == 0 ? "すべて期待どおり。" : $"★ {failures} 件が期待と違う。");
@@ -1412,8 +1536,10 @@ internal static class Program
 
         var cache = new TranslationCache();
 
-        var first = await LineTranslation.TranslateAsync(local, lines, cache: cache).ConfigureAwait(false);
-        var second = await LineTranslation.TranslateAsync(local, lines, cache: cache).ConfigureAwait(false);
+        var first = await LineTranslation
+            .TranslateAsync(local, lines, cache: cache, sourceLanguage: "en").ConfigureAwait(false);
+        var second = await LineTranslation
+            .TranslateAsync(local, lines, cache: cache, sourceLanguage: "en").ConfigureAwait(false);
 
         Console.WriteLine("=== FR-TRN-09 使い回しの確認 ===");
         Console.WriteLine($"  1 回目  記憶から {first.CachedCount}/{first.SentCount} 件  "
@@ -1459,27 +1585,31 @@ internal static class Program
             new("Evolves from Eevee", 1f, new OcrBox(0, 30, 100, 20)),
         ];
 
-        OcrLine[] chinese =
+        OcrLine[] korean =
         [
-            new("使用这个技能需要消耗30点灵力。", 1f, new OcrBox(0, 0, 100, 20)),
+            new("이 아이템은 거래할 수 없습니다.", 1f, new OcrBox(0, 0, 100, 20)),
         ];
 
-        (string Label, TranslationOutcome Outcome, OcrLine[] Lines, bool ShouldSwitch)[] cases =
+        (string Label, TranslationOutcome Outcome, OcrLine[] Lines, string Source, bool ShouldSwitch)[] cases =
         [
-            ("混雑（HTTP 503）", TranslationOutcome.Busy, english, true),
-            ("利用上限（HTTP 429）", TranslationOutcome.RateLimited, english, true),
-            ("応答なし", TranslationOutcome.Timeout, english, true),
-            ("キー未登録", TranslationOutcome.NotConfigured, english, false),
-            ("混雑だが原文が中国語", TranslationOutcome.Busy, chinese, false),
+            ("混雑（HTTP 503）", TranslationOutcome.Busy, english, "en", true),
+            ("利用上限（HTTP 429）", TranslationOutcome.RateLimited, english, "en", true),
+            ("応答なし", TranslationOutcome.Timeout, english, "en", true),
+            ("キー未登録", TranslationOutcome.NotConfigured, english, "en", false),
+
+            // 「クラウドのみ」の組み合わせ。製品では切り替え先自体を渡さない（TranslatorSelection）が、
+            // 渡されてもローカルが断るので切り替わらない。
+            ("混雑だが原文が韓国語", TranslationOutcome.Busy, korean, "ko", false),
         ];
 
         Console.WriteLine("=== FR-TRN-06 切り替えの確認 ===");
         var failures = 0;
 
-        foreach (var (label, outcome, lines, shouldSwitch) in cases)
+        foreach (var (label, outcome, lines, source, shouldSwitch) in cases)
         {
             using var primary = new AlwaysFails(outcome);
-            var result = await LineTranslation.TranslateAsync(primary, lines, local).ConfigureAwait(false);
+            var result = await LineTranslation
+                .TranslateAsync(primary, lines, local, sourceLanguage: source).ConfigureAwait(false);
 
             var switched = result.FellBackFrom is not null;
             var ok = switched == shouldSwitch;
@@ -1525,5 +1655,134 @@ internal static class Program
     }
 
     private static Task<TranslationResult> TranslateAsync(LocalNmtTranslator translator, string[] lines) =>
-        translator.TranslateAsync(new TranslationRequest(string.Join('\n', lines)));
+        translator.TranslateAsync(new TranslationRequest(string.Join('\n', lines)) { SourceLanguage = "en", TargetLanguage = "ja" });
+
+    /// <summary>
+    /// 2026-10-25 に足した組み合わせ（日→英 / 英→中 / 日→英→中）を、実際のモデルで確かめる。
+    /// </summary>
+    /// <remarks>
+    /// <para>モデルは英→日のモデルの隣（<c>out/elan-ja-en/int8</c>・<c>out/opus-en-zh/int8</c>）を見る。</para>
+    /// <para><b>訳文の質は人が読んで判断する。</b>ここで機械的に見るのは、成功すること・行数が変わらないこと・
+    /// 中国語が簡体字で出ること（訳先の印が効いていること）・違う言語の行を訳さないこと。
+    /// 数値は数えて出すだけにする（英→中は 2 を「两」のように漢数字にすることがある。FR-TRN-08 が原文を併記する）。</para>
+    /// </remarks>
+    private static async Task<int> CheckPairsAsync(LocalNmtOptions baseOptions)
+    {
+        var failures = 0;
+
+        void Check(string label, bool ok, string detail = "")
+        {
+            if (!ok)
+            {
+                failures++;
+            }
+
+            Console.WriteLine($"  {(ok ? "  " : "★ ")}{label,-44} {(ok ? "OK" : "NG"),-4}{detail}");
+        }
+
+        var options = baseOptions with
+        {
+            JapaneseToEnglishModelDirectory = Path.GetFullPath(
+                Path.Combine(baseOptions.ModelDirectory, "..", "..", "elan-ja-en", "int8")),
+            EnglishToChineseModelDirectory = Path.GetFullPath(
+                Path.Combine(baseOptions.ModelDirectory, "..", "..", "opus-en-zh", "int8")),
+        };
+
+        using var local = new LocalNmtTranslator(options);
+        foreach (var model in new[] { LocalNmtModel.JapaneseToEnglish, LocalNmtModel.EnglishToChinese })
+        {
+            if (!local.HasModel(model))
+            {
+                Console.WriteLine($"モデルがありません: {options.DirectoryOf(model)}");
+                Console.WriteLine("tools/nmt-convert/convert.py で変換してください（README の手順）。");
+                return 1;
+            }
+        }
+
+        string[] japanese =
+        [
+            "怪我はないか？",
+            "毎ターン最大HPの5%を回復する。3ターン持続。",
+            "装備すると防御力が15%上昇するが、移動速度が10%低下する。",
+            "戦闘中はこのアイテムを使用できません。",
+            "ずっと待っていたんだ。さあ、中に入って。",
+            "ニューゲーム",
+        ];
+
+        string[] english =
+        [
+            "I can't pick up items!",
+            "Your backpack is full. You cannot carry any more items.",
+            "When equipped, defense increases by 15% but movement speed decreases by 10%.",
+            "This item cannot be used during combat.",
+            "I've been waiting for you for a long time. Come on in.",
+            "System Settings",
+
+            // 4 文続く段落。区切らずに訳すと後ろの 2 文が消えた（2026-10-25）。
+            "I've opened the door to the adaptation chamber. Your printed body can borrow tricks from indigenous life. You'll feel better. You'll be better.",
+        ];
+
+        // 繁体字にしか無い字（よく出るもの）。簡体字で出るべきところに混ざっていないかを見る。
+        const string traditionalOnly = "體讓劍戰鬥藥獲聲顯險離屬導裝備擊殺錢務選擇設儲說話雙應對龍門語國時會開關鍵網學習經驗寶點術傷魔獸們這個來無麼與當為過還進後間現發員動頭見長實";
+
+        foreach (var (source, main, lines, label) in new[]
+        {
+            ("ja", "en", japanese, "日→英"),
+            ("en", "zh-Hans", english, "英→中"),
+            ("ja", "zh-Hans", japanese, "日→英→中（精度が大きく下がる組み合わせ）"),
+        })
+        {
+            Console.WriteLine($"=== {label} ===");
+            var watch = Stopwatch.StartNew();
+            var result = await local
+                .TranslateAsync(new TranslationRequest(string.Join('\n', lines)) { SourceLanguage = source, TargetLanguage = main })
+                .ConfigureAwait(false);
+            var elapsed = watch.Elapsed;
+            var output = result.Text.Split('\n');
+
+            for (var i = 0; i < lines.Length; i++)
+            {
+                Console.WriteLine($"  {lines[i]}");
+                Console.WriteLine($"    → {(i < output.Length ? output[i] : "（無し）")}");
+            }
+
+            Check("成功する", result.Outcome == TranslationOutcome.Succeeded, $"← {result.Outcome} {result.Message}");
+            Check("行数が変わらない", output.Length == lines.Length);
+            Check("どの行も原文のまま返さない", output.Zip(lines).All(p => p.First.Length > 0 && p.First != p.Second));
+
+            if (source == "en" && Languages.Family(main) == "zh")
+            {
+                // You'll feel better. You'll be better. の「好」が残っているか（区切らないと消える）。
+                Check("長い段落の後ろの文が消えない", output.Length == lines.Length && output[^1].Contains('好'), $"← {output.LastOrDefault()}");
+            }
+
+            if (Languages.Family(main) == "zh")
+            {
+                Check("中国語で出る（訳先の印が効いている）", output.All(t => t.Any(c => c is >= '\u4E00' and <= '\u9FFF')));
+                var traditional = output.Where(t => t.Any(traditionalOnly.Contains)).ToList();
+                Check("繁体字が混ざらない", traditional.Count == 0, traditional.Count == 0 ? string.Empty : $"← {string.Join(" | ", traditional)}");
+            }
+
+            var lost = lines
+                .Zip(output)
+                .SelectMany(p => NumberVerifier.Extract(p.First).Where(n => !p.Second.Contains(n, StringComparison.Ordinal)))
+                .ToList();
+            Console.WriteLine($"  数値が消えた・変わった: {(lost.Count == 0 ? "なし" : string.Join(", ", lost))}（FR-TRN-08 が原文を併記する）");
+            Console.WriteLine($"  {lines.Length} 行 {elapsed.TotalMilliseconds:F0} ms（モデルの読み込みを含むことがある）");
+            Console.WriteLine();
+        }
+
+        Console.WriteLine("=== 違う言語の行は訳さない（原文は日本語 → 英語）===");
+        var mixed = await local
+            .TranslateAsync(new TranslationRequest("設定\nAttack Power\nゲームを始める") { SourceLanguage = "ja", TargetLanguage = "en" })
+            .ConfigureAwait(false);
+        var mixedLines = mixed.Text.Split('\n');
+        Check("漢字だけの行は日本語として訳す", mixedLines.ElementAtOrDefault(0) is { } settings && settings != "設定", $"← {mixedLines.ElementAtOrDefault(0)}");
+        Check("英語の行は訳さない", mixedLines.ElementAtOrDefault(1) == "Attack Power", $"← {mixedLines.ElementAtOrDefault(1)}");
+        Check("かなの行は訳す", mixedLines.ElementAtOrDefault(2) is { } start && start != "ゲームを始める", $"← {mixedLines.ElementAtOrDefault(2)}");
+
+        Console.WriteLine();
+        Console.WriteLine(failures == 0 ? "すべて期待どおり。" : $"★ {failures} 件が期待と違う。");
+        return failures == 0 ? 0 : 1;
+    }
 }

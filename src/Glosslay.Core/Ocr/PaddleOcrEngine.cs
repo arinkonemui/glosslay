@@ -26,7 +26,7 @@ public sealed class PaddleOcrEngine(PaddleOcrOptions? options = null) : IOcrEngi
     private bool _disposed;
 
     /// <inheritdoc />
-    public string Name => "PaddleOCR (PP-OCRv6 small)";
+    public string Name => $"PaddleOCR ({_options.RecognitionModelName})";
 
     /// <inheritdoc />
     public bool IsReady => _detection is not null && _recognition is not null;

@@ -24,12 +24,42 @@ public sealed record LocalNmtOptions
     /// v1.0 ではオンデマンド DL（FR-TRN-03）でここへ置く。</para>
     /// <para><b>モデルは実行ファイルに埋め込まない。</b>CC BY-SA 4.0 の「並べて配る」立場を
     /// 保つため（PLAN.md の配布方針 / <c>tools/nmt-convert/README.md</c>）。</para>
+    /// <para>この項目は<b>英→日</b>のモデル。名前は 1 組だけだった頃のまま（設定ファイルの互換のため）。</para>
     /// </remarks>
     public string ModelDirectory { get; init; } =
         Path.Combine(AppContext.BaseDirectory, "models", "nmt", "en-ja");
 
-    /// <summary>UI に出すモデルの呼び名（FR-TRN-13 のバッジ）。</summary>
-    public string ModelName { get; init; } = "elan-mt-bt-en-ja (int8)";
+    /// <summary>
+    /// 日→英のモデル一式の置き場所（2026-10-25 追加）。
+    /// </summary>
+    /// <remarks>
+    /// <para>日→英と、日→英→中の 1 段目に使う。<c>Mitsua/elan-mt-bt-ja-en</c>（<b>CC BY-SA 4.0</b>。
+    /// 英→日と同じく帰属表示と同ライセンスでの公開が要る — <c>tools/nmt-convert/README.md</c>）。</para>
+    /// <para><b>無くても動く。</b>置かれていなければ日本語の原文はローカルでは訳さず、理由を返す。</para>
+    /// </remarks>
+    public string JapaneseToEnglishModelDirectory { get; init; } =
+        Path.Combine(AppContext.BaseDirectory, "models", "nmt", "ja-en");
+
+    /// <summary>
+    /// 英→中のモデル一式の置き場所（2026-10-25 追加）。
+    /// </summary>
+    /// <remarks>
+    /// <para>英→中と、日→英→中の 2 段目に使う。<c>Helsinki-NLP/opus-mt-en-zh</c>（Apache 2.0）。</para>
+    /// <para><b>無くても動く。</b>置かれていなければ中国語へはローカルでは訳さず、理由を返す。</para>
+    /// </remarks>
+    public string EnglishToChineseModelDirectory { get; init; } =
+        Path.Combine(AppContext.BaseDirectory, "models", "nmt", "en-zh");
+
+    /// <summary>
+    /// 英→中のモデルに、どの書き方で出させるかの印。<b>原文の頭に付ける。</b>
+    /// </summary>
+    /// <remarks>
+    /// <para>このモデルは中国語の複数の書き方（簡体字・繁体字・広東語など）を出せるため、
+    /// 原文の頭に <c>&gt;&gt;id&lt;&lt;</c> の印が要る（モデルの説明書き）。<b>付けないと書き方が定まらない。</b></para>
+    /// <para>既定は簡体字（<c>&gt;&gt;cmn_Hans&lt;&lt;</c>）。中国語は簡体字だけ（2026-10-24 人間の判断）。
+    /// 繁体字を足すときは <c>&gt;&gt;cmn_Hant&lt;&lt;</c> にすればよく、モデルの作り直しは要らない。</para>
+    /// </remarks>
+    public string EnglishToChineseTargetToken { get; init; } = ">>cmn_Hans<<";
 
     /// <summary>
     /// 中→英のモデル一式の置き場所（2026-10-19 追加）。
@@ -131,6 +161,25 @@ public sealed record LocalNmtOptions
 
     /// <summary>中→英に必要なファイルの一覧。</summary>
     public IEnumerable<string> ChineseRequiredFiles() => RequiredFilesIn(ChineseModelDirectory);
+
+    /// <summary>モデルの置き場所。</summary>
+    public string DirectoryOf(LocalNmtModel model) => model switch
+    {
+        LocalNmtModel.EnglishToJapanese => ModelDirectory,
+        LocalNmtModel.ChineseToEnglish => ChineseModelDirectory,
+        LocalNmtModel.JapaneseToEnglish => JapaneseToEnglishModelDirectory,
+        LocalNmtModel.EnglishToChinese => EnglishToChineseModelDirectory,
+        _ => throw new ArgumentOutOfRangeException(nameof(model), model, null),
+    };
+
+    /// <summary>
+    /// 原文の頭に付ける印（無ければ <c>null</c>）。英→中だけが要る（<see cref="EnglishToChineseTargetToken"/>）。
+    /// </summary>
+    public string? SourcePrefixTokenOf(LocalNmtModel model) =>
+        model == LocalNmtModel.EnglishToChinese ? EnglishToChineseTargetToken : null;
+
+    /// <summary>モデルに必要なファイルの一覧。</summary>
+    public IEnumerable<string> RequiredFilesOf(LocalNmtModel model) => RequiredFilesIn(DirectoryOf(model));
 
     /// <summary>モデル一式に必要なファイル。組み合わせによらず同じ形。</summary>
     public static IEnumerable<string> RequiredFilesIn(string directory)

@@ -19,6 +19,29 @@ internal static class Scripts
         or >= '\uF900' and <= '\uFAFF'      // CJK 互換漢字
         or >= '\uFF00' and <= '\uFFEF';     // 全角・半角形
 
+    /// <summary>ハングルか（音節・字母・互換字母）。</summary>
+    internal static bool IsHangul(char c) => c
+        is >= '\uAC00' and <= '\uD7AF'      // ハングル音節
+        or >= '\u1100' and <= '\u11FF'      // ハングル字母
+        or >= '\u3130' and <= '\u318F';     // ハングル互換字母
+
+    /// <summary>かなか（ひらがな・カタカナ）。</summary>
+    internal static bool IsKana(char c) => c is >= '\u3040' and <= '\u309F' or >= '\u30A0' and <= '\u30FF';
+
+    /// <summary>漢字か（CJK 統合漢字・拡張A・互換漢字）。</summary>
+    internal static bool IsHan(char c) =>
+        c is >= '\u4E00' and <= '\u9FFF' or >= '\u3400' and <= '\u4DBF' or >= '\uF900' and <= '\uFAFF';
+
+    /// <summary>
+    /// 前後に空白を入れずに繋ぐ文字か（漢字・かな・全角記号）。
+    /// </summary>
+    /// <remarks>
+    /// <b>ハングルは含めない。</b>韓国語は語を空白で区切る言語で、詰めると単語がくっつく
+    /// （「받을 수」＋「있습니다」→「받을 수있습니다」）。<see cref="IsWide"/> はハングルを含む
+    /// （英語の行かを数えるため）ので、継ぎ目の判断には使わない（2026-10-25・SPEC.md FR-OCR-02）。
+    /// </remarks>
+    internal static bool JoinsWithoutSpace(char c) => IsWide(c) && !IsHangul(c);
+
     /// <summary>
     /// 英→日のモデルに渡せる行か（ラテン文字が主体か）。
     /// </summary>

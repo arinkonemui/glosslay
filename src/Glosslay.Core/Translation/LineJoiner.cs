@@ -360,9 +360,10 @@ public static class LineJoiner
     /// 英語は単語の区切りが空白なので入れる。
     /// <b>日本語・中国語には入れない。</b>「勝利の / 条件」を「勝利の 条件」にすると、
     /// 分かち書きしない言語では不自然な入力になる。句読点や閉じ括弧の前にも入れない。
+    /// <b>韓国語には入れる</b>（語を空白で区切る言語。<see cref="Scripts.JoinsWithoutSpace"/>）。
     /// </remarks>
     private static bool NeedsSpace(char left, char right) =>
-        !Scripts.IsWide(left) && !Scripts.IsWide(right) && !NoSpaceBefore.Contains(right);
+        !Scripts.JoinsWithoutSpace(left) && !Scripts.JoinsWithoutSpace(right) && !NoSpaceBefore.Contains(right);
 
     private const string SentenceEnds = ".!?:;…。！？：；)]}）］｝」』";
 

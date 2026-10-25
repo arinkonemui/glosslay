@@ -47,6 +47,28 @@ public sealed class WindowsOcrEngine : IOcrEngine
     public static IReadOnlyList<string> AvailableLanguages { get; } =
         [.. WinOcr.OcrEngine.AvailableRecognizerLanguages.Select(l => l.LanguageTag)];
 
+    /// <summary>
+    /// 原文の言語に合う、この環境で使える認識言語。無ければ <c>null</c>（FR-OCR-02 / 10）。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>高速モードで読む言語は原文の言語に合わせる</b>（2026-10-25）。それまでは別に選ばせていた。
+    /// 日本語の認識器で英語を読ませると、英単語に漢字やかなが混ざる（2026-10-12 実測）。</para>
+    /// <para>中国語は簡体字の認識器を先に選ぶ（<c>zh-Hans</c> / <c>zh-CN</c>）。無ければ繁体字のものでも使う。</para>
+    /// </remarks>
+    public static string? LanguageFor(string sourceLanguage)
+    {
+        ArgumentNullException.ThrowIfNull(sourceLanguage);
+
+        var family = Languages.Family(sourceLanguage);
+        var candidates = AvailableLanguages.Where(tag => Languages.Family(tag) == family).ToList();
+
+        return family == "zh"
+            ? candidates.FirstOrDefault(tag => tag.Contains("Hans", StringComparison.OrdinalIgnoreCase)
+                                               || tag.EndsWith("CN", StringComparison.OrdinalIgnoreCase))
+              ?? candidates.FirstOrDefault()
+            : candidates.FirstOrDefault();
+    }
+
     /// <summary>指定した言語を認識できるか。</summary>
     public static bool Supports(string language)
     {
@@ -203,19 +225,20 @@ public sealed class WindowsOcrEngine : IOcrEngine
         }
 
         // 日本語などでは、両側ともラテン文字のときだけ空白を入れる。
-        return !Scripts.IsWide(previous) && !Scripts.IsWide(next[0]);
+        return !Scripts.JoinsWithoutSpace(previous) && !Scripts.JoinsWithoutSpace(next[0]);
     }
 
     /// <summary>その言語が語を空白で区切るか。</summary>
     /// <remarks>
-    /// 日本語・中国語・韓国語・タイ語は区切らない。
+    /// 日本語・中国語・タイ語は区切らない。
+    /// <b>韓国語は区切る</b>（語の間に空白を置く言語。以前は区切らない側に入れており、
+    /// 単語がくっついていた — 2026-10-25 に直した）。
     /// <b>ここに無い言語は区切る側に倒す</b> — 余計な空白が入るより、
     /// 詰めてはいけないものを詰める方が害が大きい。
     /// </remarks>
     private static bool UsesWordSeparators(string languageTag) =>
         !(languageTag.StartsWith("ja", StringComparison.OrdinalIgnoreCase)
           || languageTag.StartsWith("zh", StringComparison.OrdinalIgnoreCase)
-          || languageTag.StartsWith("ko", StringComparison.OrdinalIgnoreCase)
           || languageTag.StartsWith("th", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>

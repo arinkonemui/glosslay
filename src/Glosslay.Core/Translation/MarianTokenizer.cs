@@ -97,18 +97,38 @@ public sealed class MarianTokenizer
         };
     }
 
+    /// <summary>語彙にある片の id。無ければ <c>null</c>。</summary>
+    public int? IdOf(string piece)
+    {
+        ArgumentNullException.ThrowIfNull(piece);
+        return _toId.TryGetValue(piece, out var id) ? id : null;
+    }
+
     /// <summary>
     /// 原文を id 列にする。末尾に <c>&lt;/s&gt;</c> が付く。
     /// </summary>
     /// <param name="text">原文。</param>
     /// <param name="maxTokens">上限。超えた分は切り捨て、末尾に <c>&lt;/s&gt;</c> を残す。</param>
-    public int[] Encode(string text, int maxTokens)
+    /// <param name="prefixId">
+    /// 頭に付ける id（英→中の <c>&gt;&gt;cmn_Hans&lt;&lt;</c> など）。<c>null</c> なら付けない。
+    /// </param>
+    /// <remarks>
+    /// <b>訳先の印は 1 つの片として付ける。</b>文字列のまま <c>.spm</c> に通すと
+    /// <c>&gt;&gt;</c> や <c>cmn</c> に割れて、ただの記号として扱われる。
+    /// Python 側（transformers の MarianTokenizer）も印を切り出してから残りを分割している。
+    /// </remarks>
+    public int[] Encode(string text, int maxTokens, int? prefixId = null)
     {
         ArgumentNullException.ThrowIfNull(text);
         ArgumentOutOfRangeException.ThrowIfLessThan(maxTokens, 2);
 
         var tokens = _pieces.EncodeToTokens(text, out _);
-        var ids = new List<int>(tokens.Count);
+        var ids = new List<int>(tokens.Count + 1);
+
+        if (prefixId is { } prefix)
+        {
+            ids.Add(prefix);
+        }
 
         foreach (var token in tokens)
         {

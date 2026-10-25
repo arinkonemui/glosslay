@@ -24,6 +24,7 @@ internal sealed class MarianModel : IDisposable
     private readonly InferenceSession _decoder;
     private readonly InferenceSession _decoderWithPast;
     private readonly MarianTokenizer _tokenizer;
+    private readonly int? _prefixId;
     private readonly string[] _pastInputNames;
 
     private MarianModel(
@@ -31,13 +32,15 @@ internal sealed class MarianModel : IDisposable
         InferenceSession encoder,
         InferenceSession decoder,
         InferenceSession decoderWithPast,
-        MarianTokenizer tokenizer)
+        MarianTokenizer tokenizer,
+        int? prefixId)
     {
         _options = options;
         _encoder = encoder;
         _decoder = decoder;
         _decoderWithPast = decoderWithPast;
         _tokenizer = tokenizer;
+        _prefixId = prefixId;
 
         // 層の数はモデルによって変わる。名前を数え上げて拾う。
         _pastInputNames =
@@ -52,7 +55,11 @@ internal sealed class MarianModel : IDisposable
     /// </summary>
     /// <param name="directory">モデル一式（ONNX 3 つ・<c>source.spm</c>・<c>vocab.json</c>）の置き場。</param>
     /// <param name="options">スレッド数や長さの上限。</param>
-    public static MarianModel Load(string directory, LocalNmtOptions options)
+    /// <param name="sourcePrefixToken">
+    /// 原文の頭に付ける印（英→中の <c>&gt;&gt;cmn_Hans&lt;&lt;</c>）。<c>null</c> なら付けない。
+    /// 語彙に無ければ <see cref="InvalidDataException"/>（黙って付けずに訳すと書き方が定まらない）。
+    /// </param>
+    public static MarianModel Load(string directory, LocalNmtOptions options, string? sourcePrefixToken = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(directory);
         ArgumentNullException.ThrowIfNull(options);
@@ -79,14 +86,23 @@ internal sealed class MarianModel : IDisposable
             ExecutionMode = ExecutionMode.ORT_SEQUENTIAL,
         };
 
+        // 分割と印は先に確かめる。セッションを作った後に断ると、作ったセッションが残る。
+        var tokenizer = MarianTokenizer.Load(
+            Path.Combine(directory, "source.spm"), Path.Combine(directory, "vocab.json"));
+
+        int? prefixId = null;
+        if (sourcePrefixToken is { Length: > 0 } token)
+        {
+            prefixId = tokenizer.IdOf(token) ?? throw new InvalidDataException(
+                $"訳先の印 {token} が語彙にありません（{directory}）。モデルが違うか、設定の印が誤っています。");
+        }
+
         var encoder = new InferenceSession(Path.Combine(directory, "encoder_model.onnx"), sessionOptions);
         var decoder = new InferenceSession(Path.Combine(directory, "decoder_model.onnx"), sessionOptions);
         var decoderWithPast = new InferenceSession(
             Path.Combine(directory, "decoder_with_past_model.onnx"), sessionOptions);
-        var tokenizer = MarianTokenizer.Load(
-            Path.Combine(directory, "source.spm"), Path.Combine(directory, "vocab.json"));
 
-        return new MarianModel(options, encoder, decoder, decoderWithPast, tokenizer);
+        return new MarianModel(options, encoder, decoder, decoderWithPast, tokenizer, prefixId);
     }
 
     /// <summary>まとめて 1 回の推論で訳す。</summary>
@@ -98,7 +114,7 @@ internal sealed class MarianModel : IDisposable
         var encoded = new int[batch][];
         for (var b = 0; b < batch; b++)
         {
-            encoded[b] = tokenizer.Encode(texts[b], _options.MaxInputTokens);
+            encoded[b] = tokenizer.Encode(texts[b], _options.MaxInputTokens, _prefixId);
         }
 
         var sourceLength = encoded.Max(e => e.Length);
@@ -106,7 +122,8 @@ internal sealed class MarianModel : IDisposable
         // 中身の無い入力をモデルに渡すと、ONNX Runtime が形の不整合で例外を投げる
         // （2026-10-19、中→英→日で 1 段目の結果が空になった行で実際に起きた）。
         // 1 件でも中身があれば、短い行は詰め物で揃うので問題ない。
-        if (sourceLength == 0)
+        // 訳先の印だけの入力も中身が無いのと同じ（印だけを訳させると意味の無い文が出る）。
+        if (sourceLength <= (_prefixId is null ? 0 : 1))
         {
             return [.. texts.Select(_ => string.Empty)];
         }

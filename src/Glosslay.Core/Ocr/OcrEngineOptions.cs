@@ -41,15 +41,8 @@ public sealed record OcrEngineOptions
     /// <summary>使うエンジン。<b>既定は PaddleOCR</b>（FR-OCR-03）。</summary>
     public OcrEngineChoice Engine { get; init; } = OcrEngineChoice.Paddle;
 
-    /// <summary>
-    /// 高速モードで認識する言語（BCP 47）。<c>null</c> なら利用者の言語設定に任せる。
-    /// </summary>
-    /// <remarks>
-    /// <b>Windows に入っている言語しか選べない</b>（<see cref="WindowsOcrEngine.AvailableLanguages"/>）。
-    /// 原文の言語に合わせること。日本語の認識器で英語を読ませると、
-    /// <b>英単語に漢字やかなが混ざる</b>（2026-10-12 実測）。
-    /// </remarks>
-    public string? WindowsLanguage { get; init; }
+    // 高速モードで認識する言語は、2026-10-25 から原文の言語（FR-OCR-02）に合わせる
+    // （WindowsOcrEngine.LanguageFor）。それまでここに持っていた WindowsLanguage は読まない。
 
     /// <summary>設定を読み込む。ファイルが無い / 壊れている場合は既定値。</summary>
     public static OcrEngineOptions Load() =>

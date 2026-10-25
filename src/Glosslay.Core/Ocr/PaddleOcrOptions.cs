@@ -24,6 +24,37 @@ public sealed record PaddleOcrOptions
     /// <summary>文字辞書の相対パス。</summary>
     public string CharacterSetPath { get; init; } = "ppocrv6_charset.txt";
 
+    /// <summary>画面に出す認識モデルの呼び名（どちらのモデルで読んでいるかを見せる）。</summary>
+    public string RecognitionModelName { get; init; } = "PP-OCRv6 small";
+
+    /// <summary>
+    /// 原文の言語に合う設定（FR-OCR-02 / 2026-10-25）。<b>韓国語だけ、認識モデルと辞書が別。</b>
+    /// </summary>
+    /// <remarks>
+    /// <para>既定の PP-OCRv6 の辞書にはハングルが 1 字も無く、韓国語は全て別の文字に化ける（PLAN.md 課題8）。
+    /// 韓国語の認識モデル（<c>korean_PP-OCRv5_mobile_rec</c>・Apache 2.0・13.4MB）は逆に漢字・かなが 0 字。
+    /// <b>読める文字が重ならないため、原文の言語で切り替える。</b>検出モデルは共通。</para>
+    /// <para>入出力の形は既定のモデルと同じ（高さ 48・辞書＋blank＋空白）で、読み取りの処理はそのまま使える。
+    /// 合成画像 4 枚で一致度約 97%（既定のモデルは約 10%）。実際のゲーム画面では未確認（PLAN.md）。</para>
+    /// </remarks>
+    public static PaddleOcrOptions ForSourceLanguage(string sourceLanguage)
+    {
+        ArgumentNullException.ThrowIfNull(sourceLanguage);
+
+        return UsesKoreanModel(sourceLanguage)
+            ? new PaddleOcrOptions
+            {
+                RecognitionModelPath = Path.Combine("korean_PP-OCRv5_mobile_rec_onnx", "inference.onnx"),
+                CharacterSetPath = "korean_ppocrv5_charset.txt",
+                RecognitionModelName = "PP-OCRv5 mobile 韓国語",
+            }
+            : new PaddleOcrOptions();
+    }
+
+    /// <summary>この原文の言語は韓国語の認識モデルで読むか。</summary>
+    public static bool UsesKoreanModel(string sourceLanguage) =>
+        Glosslay.Translation.Languages.Family(sourceLanguage) == "ko";
+
     /// <summary>
     /// 推論に使う CPU スレッド数（FR-OCR-11）。
     /// </summary>

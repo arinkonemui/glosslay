@@ -145,7 +145,12 @@ internal static partial class Program
     /// </remarks>
     private static PaddleOcrOptions BuildPaddleOptions(string[] args, string modelDirectory)
     {
-        var options = new PaddleOcrOptions
+        // --source=ko: 原文の言語に合う認識モデルで読む（FR-OCR-02。韓国語だけモデルと辞書が別）。
+        // 製品と同じ PaddleOcrOptions.ForSourceLanguage を通す。既定は日・英・中の PP-OCRv6。
+        var source = args.FirstOrDefault(a => a.StartsWith("--source=", StringComparison.Ordinal))
+                         ?["--source=".Length..] ?? "en";
+
+        var options = PaddleOcrOptions.ForSourceLanguage(source) with
         {
             ModelDirectory = modelDirectory,
             CpuThreads = 4,

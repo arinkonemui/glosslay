@@ -58,20 +58,45 @@ public sealed record TranslationOptions
     public TranslationBackendChoice Backend { get; init; } = TranslationBackendChoice.Auto;
 
     /// <summary>
-    /// 訳文の言語。BCP 47（FR-CFG-01 の「言語」）。
+    /// メイン言語（画面と訳文の言語 — FR-SYS-03）。BCP 47。<c>null</c> なら既定（日本語）。
     /// </summary>
     /// <remarks>
-    /// <para><b>プロファイルを当てると上書きされる。</b>ここにあるのは
-    /// 「いまの値」で、ゲームごとの値は <c>Profile.TargetLanguage</c> が持つ。</para>
-    /// <para><b>既定の日本語以外はクラウド翻訳のAPIキーが要る</b>（FR-TRN-03 / RULES.md 🟡-1）。
-    /// 選択肢は <see cref="TargetLanguages"/>。</para>
+    /// <para><b>アプリ全体で 1 つ。</b>プロファイルでは変わらない（2026-10-25 人間の判断）。</para>
+    /// <para>読むときは <see cref="Main"/> を使う（以前の設定ファイルの値の引き継ぎと、正規化が入る）。</para>
     /// </remarks>
-    public string TargetLanguage { get; init; } = TargetLanguages.Default;
+    public string? MainLanguage { get; init; }
+
+    /// <summary>
+    /// 以前の設定ファイルにあった「訳文の言語」。<b>読むだけで書かない。</b>
+    /// </summary>
+    /// <remarks>
+    /// 2026-10-25 までは訳文の言語だけを選んでいた。メイン言語が未設定なら、この値を引き継ぐ
+    /// （<see cref="Main"/>）。書き出すときは <c>null</c> にして消す。
+    /// </remarks>
+    public string? TargetLanguage { get; init; }
+
+    /// <summary>
+    /// 原文の言語の「いまの値」（FR-OCR-02）。<c>null</c> なら既定（英語。メイン言語が英語なら日本語）。
+    /// </summary>
+    /// <remarks>
+    /// <b>プロファイルを当てると上書きされる。</b>ゲームごとの値は <c>Profile.SourceLanguage</c> が持つ。
+    /// 読むときは <see cref="Source"/> を使う。
+    /// </remarks>
+    public string? SourceLanguage { get; init; }
+
+    /// <summary>いまのメイン言語（正規化済み）。</summary>
+    [JsonIgnore]
+    public string Main => Languages.NormalizeMain(MainLanguage ?? TargetLanguage);
+
+    /// <summary>いまの原文の言語（正規化済み）。</summary>
+    [JsonIgnore]
+    public string Source => Languages.NormalizeSource(SourceLanguage, Main);
 
     /// <summary>設定を読み込む。ファイルが無い / 壊れている場合は既定値。</summary>
     public static TranslationOptions Load() =>
         JsonSettings.Load(FileName, () => new TranslationOptions());
 
     /// <summary>設定を書き出す。</summary>
-    public void Save() => JsonSettings.Save(FileName, this);
+    /// <remarks>以前の「訳文の言語」はメイン言語へ移して消す（<see cref="TargetLanguage"/>）。</remarks>
+    public void Save() => JsonSettings.Save(FileName, this with { MainLanguage = Main, TargetLanguage = null });
 }

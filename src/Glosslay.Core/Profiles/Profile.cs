@@ -44,8 +44,15 @@ public sealed record Profile
     /// <summary>前処理の設定（FR-OCR-04 / 05）。</summary>
     public PreprocessOptions Preprocess { get; init; } = new();
 
-    /// <summary>訳文の言語。BCP 47。</summary>
-    public string TargetLanguage { get; init; } = "ja";
+    /// <summary>
+    /// 原文の言語（FR-OCR-02 / FR-CFG-01）。BCP 47。<c>null</c> なら既定（英語。メイン言語が英語なら日本語）。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>ゲームごとに違うのは原文の方</b>なので、プロファイルに持つ（2026-10-25 人間の判断）。
+    /// それまでは訳文の言語を持っていた。訳文の言語はメイン言語としてアプリ全体で 1 つ。</para>
+    /// <para>以前のプロファイルにある <c>TargetLanguage</c> は読まない（メイン言語は別に決める）。</para>
+    /// </remarks>
+    public string? SourceLanguage { get; init; }
 
     /// <summary>
     /// 自動監視を使うか（FR-MOD-06）。<b>既定は OFF。</b>
