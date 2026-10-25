@@ -285,12 +285,16 @@ public static class LineJoiner
     /// <para><b>前の行でも次の行でも、見出しがあれば繋がない。</b>
     /// 見出しは訳す価値があるので落とさず、独立した 1 件として残す。</para>
     /// <para>説明文を全部大文字で描くゲームでは繋がらなくなるが、
-    /// 繋ぎ落としに倒す方針どおり許容する。
-    /// 漢字・かなは大文字小文字を持たないため、この判定にかからない。</para>
+    /// 繋ぎ落としに倒す方針どおり許容する。</para>
+    /// <para><b>大文字小文字の無い文字（漢字・かな・ハングル）が主体の行は見出しとみなさない。</b>
+    /// こうした行に混ざる英字は <c>HP</c> <c>MP</c> <c>ATK</c> のような略語で、大文字だけになるのが普通。
+    /// 「小文字が無い」だけで判定すると、日本語・中国語の文が見出し扱いになって折り返しが繋がらなかった
+    /// （2026-10-25。<c>毎ターン最大HPの5%を回復する。その間、防御力が</c> / <c>上昇する。</c>）。</para>
     /// </remarks>
     private static bool IsHeading(string text)
     {
-        var hasUpper = false;
+        var upper = 0;
+        var caseless = 0;
         foreach (var c in text)
         {
             if (char.IsLower(c))
@@ -298,10 +302,18 @@ public static class LineJoiner
                 return false;
             }
 
-            hasUpper |= char.IsUpper(c);
+            if (char.IsUpper(c))
+            {
+                upper++;
+            }
+            else if (char.IsLetter(c))
+            {
+                caseless++;
+            }
         }
 
-        return hasUpper;
+        // 英字が主体のときだけ、大文字だけで書かれていることを見出しの印とみなす。
+        return upper > caseless;
     }
 
     /// <summary>行をまとめて 1 つにする。1 行だけならそのまま返す。</summary>

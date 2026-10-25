@@ -721,6 +721,50 @@ internal static class Program
             $"← {string.Join(" | ", japanese.Select(l => l.Text))}");
 
         Console.WriteLine();
+        Console.WriteLine("=== 行結合（大文字の略語が混ざる文は見出しにしない）===");
+
+        // 2026-10-25 に見つけた形。「体力」なら繋がり、「HP」だと見出し扱いで繋がらなかった。
+        var japaneseHp = LineJoiner.Join(
+        [
+            new("毎ターン最大HPの5%を回復する。その間、防御力が", 1f, new OcrBox(0, 0, 400, 20)),
+            new("上昇する。", 1f, new OcrBox(0, 24, 90, 20)),
+        ]);
+        Check(
+            "日本語の文に HP が入っても繋ぐ",
+            japaneseHp.Count == 1 && japaneseHp[0].Text.EndsWith("防御力が上昇する。", StringComparison.Ordinal),
+            $"← {string.Join(" | ", japaneseHp.Select(l => l.Text))}");
+
+        var chineseHp = LineJoiner.Join(
+        [
+            new("每回合恢复最大HP的5%，同时防御力", 1f, new OcrBox(0, 0, 400, 20)),
+            new("提升。", 1f, new OcrBox(0, 24, 60, 20)),
+        ]);
+        Check(
+            "中国語の文に HP が入っても繋ぐ",
+            chineseHp.Count == 1 && chineseHp[0].Text.EndsWith("防御力提升。", StringComparison.Ordinal),
+            $"← {string.Join(" | ", chineseHp.Select(l => l.Text))}");
+
+        var koreanHp = LineJoiner.Join(
+        [
+            new("매 턴 최대 HP의 5%를 회복합니다. 그동안 방어력이", 1f, new OcrBox(0, 0, 400, 20)),
+            new("상승합니다.", 1f, new OcrBox(0, 24, 100, 20)),
+        ]);
+        Check(
+            "韓国語の文に HP が入っても繋ぐ",
+            koreanHp.Count == 1 && koreanHp[0].Text.EndsWith("방어력이 상승합니다.", StringComparison.Ordinal),
+            $"← {string.Join(" | ", koreanHp.Select(l => l.Text))}");
+
+        var heading = LineJoiner.Join(
+        [
+            new("DAILY QUEST", 1f, new OcrBox(0, 0, 120, 20)),
+            new("Attach 1 Tool to your Pokémon", 1f, new OcrBox(0, 24, 300, 20)),
+        ]);
+        Check(
+            "英語の見出しは今までどおり下の行と繋がない",
+            heading.Count == 2 && heading[0].Text == "DAILY QUEST",
+            $"← {string.Join(" | ", heading.Select(l => l.Text))}");
+
+        Console.WriteLine();
         Console.WriteLine(failures == 0 ? "すべて期待どおり。" : $"★ {failures} 件が期待と違う。");
         return failures == 0 ? 0 : 1;
     }
