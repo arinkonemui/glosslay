@@ -1,3 +1,5 @@
+using static Glosslay.Localization.UiText;
+
 namespace Glosslay.Translation;
 
 /// <summary>
@@ -19,9 +21,11 @@ public sealed record MainLanguageOption(string Tag, string DisplayName)
 /// 原文の言語として選べるもの 1 件（FR-OCR-02）。
 /// </summary>
 /// <param name="Tag">BCP 47 の言語の部分（<c>ja</c> / <c>en</c> / <c>zh</c> / <c>ko</c>）。</param>
-/// <param name="DisplayName">一覧に出す名前（いまの画面の言語で書く）。</param>
-public sealed record SourceLanguageOption(string Tag, string DisplayName)
+public sealed record SourceLanguageOption(string Tag)
 {
+    /// <summary>一覧に出す名前。<b>いまの画面の言語で書く</b>（<see cref="Languages.NameOf"/>）。</summary>
+    public string DisplayName => Languages.NameOf(Tag);
+
     /// <inheritdoc cref="MainLanguageOption.ToString" />
     public override string ToString() => DisplayName;
 }
@@ -80,15 +84,13 @@ public static class Languages
     ];
 
     /// <summary>原文の言語の選択肢。</summary>
-    /// <remarks>
-    /// 名前はいまの画面の言語（日本語）で書く。画面の言語を切り替える（段 2）ときに、メイン言語の言葉に置き換える。
-    /// </remarks>
+    /// <remarks>名前はいまの画面の言語で出す（<see cref="SourceLanguageOption.DisplayName"/>）。</remarks>
     public static IReadOnlyList<SourceLanguageOption> SourceOptions { get; } =
     [
-        new("ja", "日本語"),
-        new("en", "英語"),
-        new("zh", "中国語"),
-        new("ko", "韓国語"),
+        new("ja"),
+        new("en"),
+        new("zh"),
+        new("ko"),
     ];
 
     /// <summary>
@@ -192,14 +194,24 @@ public static class Languages
         MainOptions.FirstOrDefault(o => string.Equals(o.Tag, tag, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
-    /// 説明文に使う言語の呼び名（いまの画面の言語＝日本語で書く）。
+    /// 画面に出す言語の呼び名。<b>いまの画面の言語で書く</b>（FR-SYS-03）。
     /// </summary>
     /// <remarks>
-    /// <para>画面の言語を切り替える（段 2）ときに、メイン言語の言葉に置き換える。</para>
-    /// <para><b>訳文の中国語は「中国語（簡体字）」と書く。</b>クラウドへの指示文にも使うため、
-    /// 書き方を言わないと繁体字で返ってくることがある。原文の中国語（<c>zh</c>）は書き方を問わない。</para>
+    /// <b>訳文の中国語は「中国語（簡体字）」と書く。</b>原文の中国語（<c>zh</c>）は書き方を問わない。
     /// </remarks>
-    public static string NameOf(string tag) => Family(tag) switch
+    public static string NameOf(string tag)
+    {
+        var japanese = PromptNameOf(tag);
+        return japanese == tag ? tag : T(japanese);
+    }
+
+    /// <summary>
+    /// クラウドへの指示文に書く言語の呼び名。<b>画面の言語によらず日本語で書く</b>（指示文が日本語のため）。
+    /// </summary>
+    /// <remarks>
+    /// <b>訳文の中国語は「中国語（簡体字）」と書く。</b>書き方を言わないと繁体字で返ってくることがある。
+    /// </remarks>
+    public static string PromptNameOf(string tag) => Family(tag) switch
     {
         "ja" => "日本語",
         "en" => "英語",
@@ -209,7 +221,7 @@ public static class Languages
         _ => tag,
     };
 
-    /// <summary>「日本語→韓国語」のような組み合わせの呼び名。</summary>
+    /// <summary>「日本語→韓国語」のような組み合わせの呼び名（画面の言語で書く）。</summary>
     public static string PairName(string sourceLanguage, string mainLanguage) =>
         $"{NameOf(sourceLanguage)}→{NameOf(mainLanguage)}";
 

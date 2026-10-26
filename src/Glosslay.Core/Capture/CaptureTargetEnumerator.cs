@@ -4,6 +4,7 @@ using Windows.Win32.Foundation;
 using Windows.Win32.Graphics.Dwm;
 using Windows.Win32.Graphics.Gdi;
 using Windows.Win32.UI.WindowsAndMessaging;
+using static Glosslay.Localization.UiText;
 
 namespace Glosslay.Capture;
 
@@ -71,8 +72,8 @@ public static class CaptureTargetEnumerator
             var isPrimary = (info.dwFlags & MonitorPrimary) != 0;
 
             var name = isPrimary
-                ? $"ディスプレイ {index} ({width}x{height}・メイン)"
-                : $"ディスプレイ {index} ({width}x{height})";
+                ? T("ディスプレイ {0} ({1}x{2}・メイン)", index, width, height)
+                : T("ディスプレイ {0} ({1}x{2})", index, width, height);
 
             results.Add(CaptureTarget.ForMonitor(hmonitor, name));
             return true;

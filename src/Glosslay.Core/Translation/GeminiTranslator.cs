@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using Glosslay.Configuration;
+using static Glosslay.Localization.UiText;
 
 namespace Glosslay.Translation;
 
@@ -56,7 +57,7 @@ public sealed class GeminiTranslator : ITranslator
         {
             return TranslationResult.Failure(
                 TranslationOutcome.NotConfigured,
-                "Gemini の APIキーが登録されていません。設定から登録してください。",
+                T("Gemini の APIキーが登録されていません。設定から登録してください。"),
                 stopwatch.Elapsed);
         }
 
@@ -70,16 +71,16 @@ public sealed class GeminiTranslator : ITranslator
             // 「通信できない」とは言い切らない。要求は届いていて、応答が遅いだけのことがある。
             return TranslationResult.Failure(
                 TranslationOutcome.Timeout,
-                $"Gemini が {_options.Timeout.TotalSeconds:F0} 秒以内に応答しませんでした。"
-                + " 混雑していると時間がかかることがあります。"
-                + $" 待てる場合は {GeminiOptions.FileName} の Timeout を伸ばしてください。",
+                T("Gemini が {0:F0} 秒以内に応答しませんでした。", _options.Timeout.TotalSeconds)
+                + T(" 混雑していると時間がかかることがあります。")
+                + T(" 待てる場合は {0} の Timeout を伸ばしてください。", GeminiOptions.FileName),
                 stopwatch.Elapsed);
         }
         catch (HttpRequestException exception)
         {
             return TranslationResult.Failure(
                 TranslationOutcome.NetworkError,
-                $"Gemini に接続できませんでした: {exception.Message}",
+                T("Gemini に接続できませんでした: {0}", exception.Message),
                 stopwatch.Elapsed);
         }
     }
@@ -159,21 +160,21 @@ public sealed class GeminiTranslator : ITranslator
         {
             HttpStatusCode.TooManyRequests => TranslationResult.Failure(
                 TranslationOutcome.RateLimited,
-                "Gemini の利用上限に達しました。しばらく待つと戻ります。",
+                T("Gemini の利用上限に達しました。しばらく待つと戻ります。"),
                 stopwatch.Elapsed),
 
             // 503 は Google 側の混雑。2026-09-24 に無料枠で頻発した（PLAN.md 課題7）。
             // 本文に "This model is currently experiencing high demand." が入る。
             HttpStatusCode.ServiceUnavailable => TranslationResult.Failure(
                 TranslationOutcome.Busy,
-                "Gemini が混雑していて応答できません。"
-                + " 利用者側の問題ではなく、時間をおくと戻ります。"
-                + $" 詳細: {detail}",
+                T("Gemini が混雑していて応答できません。")
+                + T(" 利用者側の問題ではなく、時間をおくと戻ります。")
+                + T(" 詳細: {0}", detail),
                 stopwatch.Elapsed),
 
             _ => TranslationResult.Failure(
                 TranslationOutcome.ServiceError,
-                $"Gemini がエラーを返しました（HTTP {(int)response.StatusCode}）: {detail}",
+                T("Gemini がエラーを返しました（HTTP {0}）: {1}", (int)response.StatusCode, detail),
                 stopwatch.Elapsed),
         };
     }
@@ -184,7 +185,7 @@ public sealed class GeminiTranslator : ITranslator
         {
             return TranslationResult.Failure(
                 TranslationOutcome.Blocked,
-                $"Gemini が応答を拒否しました（{blockReason}）。",
+                T("Gemini が応答を拒否しました（{0}）。", blockReason),
                 elapsed);
         }
 
@@ -200,7 +201,7 @@ public sealed class GeminiTranslator : ITranslator
         {
             return TranslationResult.Failure(
                 TranslationOutcome.Blocked,
-                $"Gemini が訳文を返しませんでした（finishReason: {candidate?.FinishReason ?? "不明"}）。",
+                T("Gemini が訳文を返しませんでした（finishReason: {0}）。", candidate?.FinishReason ?? T("不明")),
                 elapsed);
         }
 
@@ -211,7 +212,7 @@ public sealed class GeminiTranslator : ITranslator
 
         // 途中で切れた訳文をそのまま見せると、数値が欠けたことに気づけない（RULES.md 🟡-7）。
         return candidate?.FinishReason == "MAX_TOKENS"
-            ? result with { Message = "訳文が上限トークン数で打ち切られています。" }
+            ? result with { Message = T("訳文が上限トークン数で打ち切られています。") }
             : result;
     }
 

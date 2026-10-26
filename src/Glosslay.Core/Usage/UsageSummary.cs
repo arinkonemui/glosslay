@@ -1,4 +1,5 @@
 using System.Globalization;
+using static Glosslay.Localization.UiText;
 
 namespace Glosslay.Usage;
 
@@ -34,13 +35,13 @@ public static class UsageSummary
         ArgumentNullException.ThrowIfNull(day);
 
         var text = day.CloudCalls == 0
-            ? "今日のクラウド翻訳 なし"
-            : $"今日 クラウド {Count(day.CloudCalls)}回 / {Compact(day.CloudTokens)}トークン";
+            ? T("今日のクラウド翻訳 なし")
+            : T("今日 クラウド {0}回 / {1}トークン", Count(day.CloudCalls), Compact(day.CloudTokens));
 
         // 上限に近づいたときだけ添える。止まってから気づくのでは遅い。
         if (maxCalls > 0 && remaining <= maxCalls * RemainingWarningRatio)
         {
-            text += $"・自動の残り {Count(remaining)}回";
+            text += T("・自動の残り {0}回", Count(remaining));
         }
 
         return text;
@@ -60,22 +61,22 @@ public static class UsageSummary
         var lines = new List<string>
         {
             day.CloudCalls == 0
-                ? "今日のクラウド翻訳: なし（費用は発生していません）"
-                : $"今日のクラウド翻訳: {Count(day.CloudCalls)} 回 / {Count(day.CloudTokens)} トークン"
-                    + (day.CloudFailures > 0 ? $"（うち失敗 {Count(day.CloudFailures)} 回）" : string.Empty),
+                ? T("今日のクラウド翻訳: なし（費用は発生していません）")
+                : T("今日のクラウド翻訳: {0} 回 / {1} トークン", Count(day.CloudCalls), Count(day.CloudTokens))
+                    + (day.CloudFailures > 0 ? T("（うち失敗 {0} 回）", Count(day.CloudFailures)) : string.Empty),
 
-            $"今日のローカル翻訳: {Count(day.LocalCalls)} 回（費用なし）",
+            T("今日のローカル翻訳: {0} 回（費用なし）", Count(day.LocalCalls)),
         };
 
         // キャッシュが効いているかは、数字を出さないと確かめようがない（RULES.md 🟡-8）。
         if (day.CachedLines > 0)
         {
-            lines.Add($"覚えていた訳で済ませた行: {Count(day.CachedLines)} 行");
+            lines.Add(T("覚えていた訳で済ませた行: {0} 行", Count(day.CachedLines)));
         }
 
         if (maxCalls > 0)
         {
-            lines.Add($"自動呼び出しの残り: {Count(remaining)} / {Count(maxCalls)} 回（直近1時間）");
+            lines.Add(T("自動呼び出しの残り: {0} / {1} 回（直近1時間）", Count(remaining), Count(maxCalls)));
         }
 
         return string.Join(Environment.NewLine, lines);

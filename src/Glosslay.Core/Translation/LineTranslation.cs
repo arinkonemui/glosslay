@@ -406,10 +406,11 @@ public static partial class LineTranslation
         ArgumentNullException.ThrowIfNull(lines);
         ArgumentNullException.ThrowIfNull(targetLanguage);
 
-        var target = Languages.NameOf(targetLanguage);
+        // 指示文は日本語なので、言語の呼び名も画面の言語によらず日本語で書く。
+        var target = Languages.PromptNameOf(targetLanguage);
         var builder = new StringBuilder();
         builder.AppendLine(sourceLanguage is { Length: > 0 }
-            ? string.Concat("次の各行を", Languages.NameOf(sourceLanguage), "から", target, "へ翻訳してください。")
+            ? string.Concat("次の各行を", Languages.PromptNameOf(sourceLanguage), "から", target, "へ翻訳してください。")
             : string.Concat("次の各行を", target, "へ翻訳してください。"));
         builder.AppendLine("各行の先頭の [番号] は必ずそのまま残し、1 つの番号につき 1 行で、同じ形式で出力してください。番号を増やしたり減らしたりしないでください。");
         builder.AppendLine("これは画面の文字を読み取ったもので、1 つの文が途中で改行され、続けて並んだ複数の番号に分かれていることがあります。");

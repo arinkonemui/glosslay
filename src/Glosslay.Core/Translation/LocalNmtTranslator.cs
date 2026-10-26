@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using static Glosslay.Localization.UiText;
 
 namespace Glosslay.Translation;
 
@@ -50,7 +51,7 @@ public sealed class LocalNmtTranslator : ITranslator
     /// 組み合わせによってモデルが違うため、モデルの名前は入れない。
     /// <b>名前は訳文の使い回し（FR-TRN-09）の鍵にも使う</b>ので、組み合わせで変えない。
     /// </remarks>
-    public string Name => "ローカルNMT";
+    public string Name => T("ローカルNMT");
 
     /// <inheritdoc />
     /// <remarks>
@@ -136,7 +137,7 @@ public sealed class LocalNmtTranslator : ITranslator
         {
             return TranslationResult.Failure(
                 TranslationOutcome.Unsupported,
-                "原文の言語が指定されていません。設定で原文の言語を選んでください。",
+                T("原文の言語が指定されていません。設定で原文の言語を選んでください。"),
                 stopwatch.Elapsed);
         }
 
@@ -149,7 +150,7 @@ public sealed class LocalNmtTranslator : ITranslator
             case PairAvailability.Same:
                 return TranslationResult.Failure(
                     TranslationOutcome.Unsupported,
-                    $"原文の言語とメイン言語が同じ（{Languages.NameOf(main)}）ため、訳しません。",
+                    T("原文の言語とメイン言語が同じ（{0}）ため、訳しません。", Languages.NameOf(main)),
                     stopwatch.Elapsed);
 
             case PairAvailability.CloudOnly:
@@ -165,8 +166,8 @@ public sealed class LocalNmtTranslator : ITranslator
             {
                 return TranslationResult.Failure(
                     TranslationOutcome.NotConfigured,
-                    $"{Languages.PairName(source, main)}の翻訳モデルが見つかりません: {Path.GetFileName(missing)}"
-                    + $"（{_options.DirectoryOf(model)}）。モデルを入れるか、クラウド翻訳のAPIキーを登録してください。",
+                    T("{0}の翻訳モデルが見つかりません: {1}（{2}）。モデルを入れるか、クラウド翻訳のAPIキーを登録してください。",
+                        Languages.PairName(source, main), Path.GetFileName(missing), _options.DirectoryOf(model)),
                     stopwatch.Elapsed);
             }
         }
@@ -179,8 +180,8 @@ public sealed class LocalNmtTranslator : ITranslator
         {
             return TranslationResult.Failure(
                 TranslationOutcome.Unsupported,
-                $"{Languages.NameOf(source)}の行がありませんでした。"
-                + $"原文の言語（{Languages.NameOf(source)}）がゲームの言語と合っているか確かめてください。",
+                T("{0}の行がありませんでした。", Languages.NameOf(source))
+                + T("原文の言語（{0}）がゲームの言語と合っているか確かめてください。", Languages.NameOf(source)),
                 stopwatch.Elapsed);
         }
 
@@ -202,8 +203,8 @@ public sealed class LocalNmtTranslator : ITranslator
     /// 「クラウドのみ」の組み合わせを断る理由。何をすれば訳せるかまで言う。
     /// </summary>
     public static string CloudOnlyMessage(string sourceLanguage, string mainLanguage) =>
-        $"{Languages.PairName(sourceLanguage, mainLanguage)}はクラウド翻訳でのみ訳せます（同梱の翻訳モデルは対応していません）。"
-        + "APIキーを登録し、使うバックエンドを「自動」か「クラウドのみ」にしてください。";
+        T("{0}はクラウド翻訳でのみ訳せます（同梱の翻訳モデルは対応していません）。", Languages.PairName(sourceLanguage, mainLanguage))
+        + T("APIキーを登録し、使うバックエンドを「自動」か「クラウドのみ」にしてください。");
 
     /// <summary>モデルを、初めて要ったときに読む。</summary>
     private async Task EnsureModelAsync(LocalNmtModel model, CancellationToken cancellationToken)

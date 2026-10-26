@@ -22,6 +22,7 @@ using Glosslay.Profiles;
 using Glosslay.Shell;
 using Glosslay.Translation;
 using Glosslay.Usage;
+using static Glosslay.Localization.UiText;
 
 namespace Glosslay;
 
@@ -319,6 +320,9 @@ public partial class MainWindow : Window, IDisposable
     public MainWindow()
     {
         InitializeComponent();
+
+        // 画面の言語の字体で出す（漢字を簡体字・日本語それぞれの形で出す — FR-SYS-03）。
+        UiLanguage.ApplyTo(this);
         _cloudTranslator = CreateCloudTranslator();
 
         // 設定（エンジン・原文の言語）どおりに作る。以前はここで常に既定のエンジンを作っており、
@@ -407,17 +411,26 @@ private void StartHotkey()
         var trigger = new RawInputTrigger();
         _inputTrigger = trigger;
 
-        if (!trigger.IsActive)
+        if (trigger.IsActive)
         {
-            HotkeyText.Text = "ホットキー無効: " + string.Join(" ", trigger.Problems);
+            trigger.Fired += OnTriggerFired;
+            trigger.Attach(new WindowInteropHelper(this).Handle);
+        }
+
+        RefreshHotkeyText();
+    }
+
+    /// <summary>ホットキーの割り当てと問題を出す。画面の言語を変えたときにも呼ぶ。</summary>
+    private void RefreshHotkeyText()
+    {
+        if (_inputTrigger is not RawInputTrigger trigger)
+        {
             return;
         }
 
-        trigger.Fired += OnTriggerFired;
-        trigger.Attach(new WindowInteropHelper(this).Handle);
-
-        HotkeyText.Text = string.Join(
-            Environment.NewLine, [.. trigger.Descriptions, .. trigger.Problems]);
+        HotkeyText.Text = trigger.IsActive
+            ? string.Join(Environment.NewLine, [.. trigger.Descriptions, .. trigger.Problems])
+            : T("ホットキー無効: ") + string.Join(" ", trigger.Problems);
     }
 
     /// <summary>割り当てが発動した。</summary>
@@ -486,7 +499,7 @@ private void StartHotkey()
         {
             // ここで SetAutoWatch(false) が入れ子で走り、タイマーと設定が片付く。
             AutoWatchCheck.IsChecked = false;
-            StatusText.Text = "自動監視: 取りやめました（いつでも入れ直せます）。";
+            StatusText.Text = T("自動監視: 取りやめました（いつでも入れ直せます）。");
             return;
         }
 
@@ -499,7 +512,7 @@ private void StartHotkey()
 
         if (!enabled)
         {
-            StatusText.Text = "自動監視: 停止しました。";
+            StatusText.Text = T("自動監視: 停止しました。");
             return;
         }
 
@@ -507,7 +520,7 @@ private void StartHotkey()
         // いまの実装は 1 領域だけなので、上限が 1 以上であれば足りる。
         if (_entitlements.MaxWatchedRegions < 1)
         {
-            StatusText.Text = "自動監視: このプランでは利用できません。";
+            StatusText.Text = T("自動監視: このプランでは利用できません。");
             AutoWatchCheck.IsChecked = false;
             return;
         }
@@ -522,8 +535,8 @@ private void StartHotkey()
         _watchTimer.Start();
 
         StatusText.Text = _region is null
-            ? "自動監視: 開始（画面全体）。プレビューをドラッグして範囲を絞ると誤検知が減ります。"
-            : "自動監視: 開始（指定範囲）。";
+            ? T("自動監視: 開始（画面全体）。プレビューをドラッグして範囲を絞ると誤検知が減ります。")
+            : T("自動監視: 開始（指定範囲）。");
     }
 
     /// <summary>
@@ -574,8 +587,8 @@ private void StartHotkey()
                 case AutoWatchDecision.RateLimited:
                     // FR-MOD-04。黙って止まると「効いていない」と見えるので理由を出す。
                     StatusText.Text =
-                        $"自動監視: 1 時間あたり {_watchOptions.MaxCallsPerHour} 回の上限に達しました。"
-                        + $"約 {_watchGate.TimeUntilNext.TotalMinutes:F0} 分後に再開します。";
+                        T("自動監視: 1 時間あたり {0} 回の上限に達しました。", _watchOptions.MaxCallsPerHour)
+                        + T("約 {0:F0} 分後に再開します。", _watchGate.TimeUntilNext.TotalMinutes);
                     break;
 
                 default:
@@ -604,7 +617,7 @@ private void StartHotkey()
         var answer = MessageBox.Show(
             this,
             AutoWatchNotice.Build(_watchOptions, _region is not null),
-            "自動監視について",
+            T("自動監視について"),
             MessageBoxButton.OKCancel,
             MessageBoxImage.Information);
 
@@ -644,7 +657,7 @@ private void StartHotkey()
 
         if (!enabled)
         {
-            StatusText.Text = "カーソル静止: 停止しました（ホットキーでの翻訳は使えます）。";
+            StatusText.Text = T("カーソル静止: 停止しました（ホットキーでの翻訳は使えます）。");
             return;
         }
 
@@ -659,8 +672,8 @@ private void StartHotkey()
         _dwellTimer.Start();
 
         StatusText.Text =
-            $"カーソル静止: 開始。{_cursorOptions.DwellTime.TotalMilliseconds:F0} ms 止めると"
-            + $" 周囲 {_cursorOptions.Width}x{_cursorOptions.Height} を翻訳します。";
+            T("カーソル静止: 開始。{0:F0} ms 止めると周囲 {1}x{2} を翻訳します。",
+                _cursorOptions.DwellTime.TotalMilliseconds, _cursorOptions.Width, _cursorOptions.Height);
     }
 
     /// <summary>カーソルの見回り 1 回分。</summary>
@@ -694,8 +707,8 @@ private void StartHotkey()
         if (!_autoCallLimiter.TryTake())
         {
             StatusText.Text =
-                $"カーソル静止: 1 時間あたり {_watchOptions.MaxCallsPerHour} 回の上限に達しました。"
-                + $"約 {_autoCallLimiter.TimeUntilNext.TotalMinutes:F0} 分後に再開します。";
+                T("カーソル静止: 1 時間あたり {0} 回の上限に達しました。", _watchOptions.MaxCallsPerHour)
+                + T("約 {0:F0} 分後に再開します。", _autoCallLimiter.TimeUntilNext.TotalMinutes);
             return;
         }
 
@@ -742,21 +755,21 @@ private void StartHotkey()
     {
         if (TargetList.SelectedItem is not CaptureTarget target)
         {
-            ProfileTargetText.Text = "対象: 未選択";
+            ProfileTargetText.Text = T("対象: 未選択");
             return;
         }
 
         if (target.Kind != CaptureTargetKind.Window)
         {
-            ProfileTargetText.Text = "対象: モニタ全体（クラス名が無いため自動では切り替わりません）";
+            ProfileTargetText.Text = T("対象: モニタ全体（クラス名が無いため自動では切り替わりません）");
             return;
         }
 
         var className = WindowIdentity.GetClassName(target.Handle);
         ProfileTargetText.Text = WindowIdentity.IsVolatileClassName(className)
-            ? $"対象: タイトル {target.DisplayName}"
-                + "（クラス名は起動ごとに変わるため使えません。タイトルで絞ってください）"
-            : $"対象: クラス名 {className} / タイトル {target.DisplayName}";
+            ? T("対象: タイトル {0}", target.DisplayName)
+                + T("（クラス名は起動ごとに変わるため使えません。タイトルで絞ってください）")
+            : T("対象: クラス名 {0} / タイトル {1}", className, target.DisplayName);
     }
 
     /// <summary>
@@ -800,31 +813,30 @@ private void StartHotkey()
 
         var profile = BuildProfile(name, windowClass, ProfileTitleBox.Text.Trim());
         var note = isVolatile
-            ? "（このアプリのクラス名は起動ごとに変わるため使いません。"
-                + "タイトルに含まれる文字列を入れてください）"
+            ? T("（このアプリのクラス名は起動ごとに変わるため使いません。タイトルに含まれる文字列を入れてください）")
             : string.Empty;
 
         switch (_profileStore.Save(profile))
         {
             case ProfileSaveResult.NameRequired:
-                StatusText.Text = "プロファイル: 名前を入れてください（対象を選べばタイトルを使います）。";
+                StatusText.Text = T("プロファイル: 名前を入れてください（対象を選べばタイトルを使います）。");
                 return;
 
             // FR-SYS-10 / RULES.md 🟡-4。v1.0 は上限なしだが、理由は必ず伝える。
             case ProfileSaveResult.LimitReached:
                 StatusText.Text =
-                    $"プロファイル: 保存できるのは {_entitlements.MaxProfiles} 件までです。"
-                    + "どれかを削除してください。";
+                    T("プロファイル: 保存できるのは {0} 件までです。", _entitlements.MaxProfiles)
+                    + T("どれかを削除してください。");
                 return;
 
             case ProfileSaveResult.Replaced:
                 StatusText.Text =
-                    $"プロファイル「{profile.Name}」を上書きしました。{MatchSummary(profile)}{note}";
+                    T("プロファイル「{0}」を上書きしました。{1}{2}", profile.Name, MatchSummary(profile), note);
                 break;
 
             default:
                 StatusText.Text =
-                    $"プロファイル「{profile.Name}」を保存しました。{MatchSummary(profile)}{note}";
+                    T("プロファイル「{0}」を保存しました。{1}{2}", profile.Name, MatchSummary(profile), note);
                 break;
         }
 
@@ -844,23 +856,23 @@ private void StartHotkey()
     {
         if (profile.WindowClass.Length == 0 && profile.TitleContains.Length == 0)
         {
-            return "対象のウィンドウが分からないため、自動では切り替わりません（「適用」で使えます）。";
+            return T("対象のウィンドウが分からないため、自動では切り替わりません（「適用」で使えます）。");
         }
 
         var title = profile.TitleContains.Length > 0
-            ? $" / タイトルに「{profile.TitleContains}」"
+            ? T(" / タイトルに「{0}」", profile.TitleContains)
             : string.Empty;
 
         return profile.WindowClass.Length > 0
-            ? $"自動適用の条件: クラス名「{profile.WindowClass}」{title}"
-            : $"自動適用の条件: タイトルに「{profile.TitleContains}」";
+            ? T("自動適用の条件: クラス名「{0}」{1}", profile.WindowClass, title)
+            : T("自動適用の条件: タイトルに「{0}」", profile.TitleContains);
     }
 
     private void OnApplyProfileClick(object sender, RoutedEventArgs e)
     {
         if (ProfileCombo.SelectedItem is not Profile profile)
         {
-            StatusText.Text = "プロファイル: 適用するものを選んでください。";
+            StatusText.Text = T("プロファイル: 適用するものを選んでください。");
             return;
         }
 
@@ -885,7 +897,7 @@ private void StartHotkey()
         // プロファイルの値を土台にする。画面の 6 項目はこの後で上書きされる。
         _preprocessBase = profile.Preprocess;
 
-        SelectComboValue(ScaleCombo, profile.Preprocess.Scale, "0.0 倍");
+        SelectComboValue(ScaleCombo, profile.Preprocess.Scale, T("0.0 倍"));
         SelectComboValue(ContrastCombo, profile.Preprocess.Contrast, "0.0#");
         AutoContrastCheck.IsChecked = profile.Preprocess.AutoContrast;
         RemoveBackgroundCheck.IsChecked = profile.Preprocess.RemoveBackground;
@@ -919,10 +931,10 @@ private void StartHotkey()
         ProfileTitleBox.Text = profile.TitleContains;
         SelectTargetFor(profile);
 
-        StatusText.Text = $"プロファイル「{profile.Name}」を{(automatic ? "自動で適用" : "適用")}しました。"
+        StatusText.Text = T("プロファイル「{0}」を{1}しました。", profile.Name, (automatic ? T("自動で適用") : T("適用")))
             + AppliedSummary(profile, _translationOptions.Source, watchEnabled: profile.AutoWatch && !deferWatch)
             + (deferWatch
-                ? "／自動監視は初回だけ確認が要ります。この画面でチェックを入れてください。"
+                ? T("／自動監視は初回だけ確認が要ります。この画面でチェックを入れてください。")
                 : string.Empty);
     }
 
@@ -941,20 +953,20 @@ private void StartHotkey()
         var parts = new List<string>
         {
             profile.Region is { } region
-                ? $"範囲 {region.X},{region.Y} {region.Width}x{region.Height}"
-                : "範囲 全体",
+                ? T("範囲 {0},{1} {2}x{3}", region.X, region.Y, region.Width, region.Height)
+                : T("範囲 全体"),
             profile.Preprocess.ToString(),
-            $"原文 {Languages.NameOf(sourceLanguage)}",
+            T("原文 {0}", Languages.NameOf(sourceLanguage)),
         };
 
         if (watchEnabled)
         {
-            parts.Add("自動監視 ON");
+            parts.Add(T("自動監視 ON"));
         }
 
         if (profile.CursorDwell)
         {
-            parts.Add("カーソル静止 ON");
+            parts.Add(T("カーソル静止 ON"));
         }
 
         return string.Join(" / ", parts);
@@ -1020,14 +1032,14 @@ private void StartHotkey()
     {
         if (ProfileCombo.SelectedItem is not Profile profile)
         {
-            StatusText.Text = "プロファイル: 削除するものを選んでください。";
+            StatusText.Text = T("プロファイル: 削除するものを選んでください。");
             return;
         }
 
         // 戻せない操作なので確かめる。消すと範囲の指定からやり直しになる。
         var answer = MessageBox.Show(
             this,
-            $"プロファイル「{profile.Name}」を削除します。",
+            T("プロファイル「{0}」を削除します。", profile.Name),
             "Glosslay",
             MessageBoxButton.OKCancel,
             MessageBoxImage.Warning);
@@ -1047,7 +1059,7 @@ private void StartHotkey()
         }
 
         RefreshProfiles();
-        StatusText.Text = $"プロファイル「{profile.Name}」を削除しました（今の設定はそのままです）。";
+        StatusText.Text = T("プロファイル「{0}」を削除しました（今の設定はそのままです）。", profile.Name);
     }
 
     /// <summary>
@@ -1071,9 +1083,8 @@ private void StartHotkey()
             && new FileInfo(path).Length > 2;
 
         StatusText.Text = looksBroken
-            ? "プロファイルを読めませんでした。profiles.json の書式を確かめてください"
-                + "（1 か所でも壊れていると全部読めません）。"
-            : $"プロファイルを読み直しました: {_profileStore.Profiles.Count} 件。";
+            ? T("プロファイルを読めませんでした。profiles.json の書式を確かめてください（1 か所でも壊れていると全部読めません）。")
+            : T("プロファイルを読み直しました: {0} 件。", _profileStore.Profiles.Count);
     }
 
     private void OnOpenProfilesClick(object sender, RoutedEventArgs e)
@@ -1081,12 +1092,12 @@ private void StartHotkey()
         var path = JsonSettings.PathOf(ProfileStore.FileName);
         if (!File.Exists(path))
         {
-            StatusText.Text = "プロファイルがまだありません。先に「現在の設定を保存」を押してください。";
+            StatusText.Text = T("プロファイルがまだありません。先に「現在の設定を保存」を押してください。");
             return;
         }
 
         Process.Start(new ProcessStartInfo(path) { UseShellExecute = true })?.Dispose();
-        StatusText.Text = "profiles.json を開きました。編集したら「読み直す」を押してください。";
+        StatusText.Text = T("profiles.json を開きました。編集したら「読み直す」を押してください。");
     }
 
     private void OnProfileAutoApplyChanged(object sender, RoutedEventArgs e) =>
@@ -1180,7 +1191,7 @@ private void StartHotkey()
     {
         if (!ScreenCapture.IsSupported)
         {
-            StatusText.Text = "この環境では Windows.Graphics.Capture が利用できません。Windows 11 か確認してください。";
+            StatusText.Text = T("この環境では Windows.Graphics.Capture が利用できません。Windows 11 か確認してください。");
             CaptureNowButton.IsEnabled = false;
             CaptureDelayedButton.IsEnabled = false;
             return;
@@ -1249,7 +1260,7 @@ private void StartHotkey()
         }
         catch (Exception exception) when (exception is FileNotFoundException or InvalidDataException)
         {
-            StatusText.Text = $"翻訳モデルを読み込めませんでした: {exception.Message}";
+            StatusText.Text = T("翻訳モデルを読み込めませんでした: {0}", exception.Message);
         }
     }
 
@@ -1263,13 +1274,13 @@ private void StartHotkey()
             await engine.InitializeAsync().ConfigureAwait(true);
             if (ReferenceEquals(engine, _ocrEngine))
             {
-                StatusText.Text = $"準備完了（{engine.Name}）";
+                StatusText.Text = T("準備完了（{0}）", engine.Name);
             }
         }
         catch (FileNotFoundException ex)
         {
             // モデル未配置は想定内。キャプチャ自体は使えるので落とさない。
-            StatusText.Text = $"OCR は使えません: {ex.Message}";
+            StatusText.Text = T("OCR は使えません: {0}", ex.Message);
         }
         catch (NotSupportedException ex)
         {
@@ -1375,7 +1386,7 @@ private void StartHotkey()
         RefreshOcrLanguages();
 
         OcrEngineStateText.Text = $"{_ocrEngine.Name}"
-            + (_ocrEngine.ProvidesConfidence ? string.Empty : " — 確信度を返しません");
+            + (_ocrEngine.ProvidesConfidence ? string.Empty : T(" — 確信度を返しません"));
     }
 
     private void OnOcrEngineChanged(object sender, RoutedEventArgs e)
@@ -1396,8 +1407,8 @@ private void StartHotkey()
         ReplaceOcrEngine();
 
         StatusText.Text = choice == OcrEngineChoice.Windows
-            ? "高速モードに切り替えました。読み直すには OCR を実行してください。"
-            : "既定のエンジンに戻しました。読み直すには OCR を実行してください。";
+            ? T("高速モードに切り替えました。読み直すには OCR を実行してください。")
+            : T("既定のエンジンに戻しました。読み直すには OCR を実行してください。");
     }
 
     /// <summary>
@@ -1432,7 +1443,7 @@ private void StartHotkey()
             UseShellExecute = true,
         })?.Dispose();
 
-        StatusText.Text = "設定を開きました。言語を追加したら Glosslay を再起動してください。";
+        StatusText.Text = T("設定を開きました。言語を追加したら Glosslay を再起動してください。");
     }
 
     private void OnWindowClosed(object? sender, EventArgs e) => Dispose();
@@ -1461,8 +1472,8 @@ private void StartHotkey()
         if (!_trayOptions.HideNoticeShown)
         {
             _trayIcon.ShowNotice(
-                "Glosslay はタスクトレイで動いています",
-                "ホットキーはこのまま使えます。終了するには、このアイコンを右クリックしてください。");
+                T("Glosslay はタスクトレイで動いています"),
+                T("ホットキーはこのまま使えます。終了するには、このアイコンを右クリックしてください。"));
             _trayOptions = _trayOptions with { HideNoticeShown = true };
             _trayOptions.Save();
         }
@@ -1506,8 +1517,8 @@ private void StartHotkey()
 
         var items = new List<TrayMenuItem>
         {
-            new(TrayMenuOpen, "画面を開く") { IsDefault = true },
-            new(TrayMenuAutoWatch, "自動監視") { IsChecked = AutoWatchCheck.IsChecked == true },
+            new(TrayMenuOpen, T("画面を開く")) { IsDefault = true },
+            new(TrayMenuAutoWatch, T("自動監視")) { IsChecked = AutoWatchCheck.IsChecked == true },
         };
 
         if (_inputTrigger is RawInputTrigger { IsActive: true } trigger && trigger.Descriptions.Count > 0)
@@ -1521,7 +1532,7 @@ private void StartHotkey()
         }
 
         items.Add(TrayMenuItem.Separator);
-        items.Add(new TrayMenuItem(TrayMenuExit, "終了"));
+        items.Add(new TrayMenuItem(TrayMenuExit, T("終了")));
 
         switch (_trayIcon.ShowMenu(items))
         {
@@ -1588,8 +1599,8 @@ private void StartHotkey()
         _trayOptions = _trayOptions with { CloseBehavior = behavior };
         _trayOptions.Save();
         StatusText.Text = behavior == CloseBehavior.HideToTray
-            ? "× を押すとタスクトレイにしまうようにしました。"
-            : "× を押すとアプリを終了するようにしました。";
+            ? T("× を押すとタスクトレイにしまうようにしました。")
+            : T("× を押すとアプリを終了するようにしました。");
     }
 
     private void OnAutoStartChanged(object sender, RoutedEventArgs e)
@@ -1604,12 +1615,12 @@ private void StartHotkey()
         {
             _autoStart.Set(enabled, path);
             StatusText.Text = enabled
-                ? "Windows の起動時に自動で起動するようにしました（タスクトレイで待機します）。"
-                : "自動起動をやめました。";
+                ? T("Windows の起動時に自動で起動するようにしました（タスクトレイで待機します）。")
+                : T("自動起動をやめました。");
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or IOException)
         {
-            StatusText.Text = "自動起動の設定を変えられませんでした: " + ex.Message;
+            StatusText.Text = T("自動起動の設定を変えられませんでした: ") + ex.Message;
         }
 
         RefreshTraySettings();
@@ -1629,7 +1640,7 @@ private void StartHotkey()
                     && !_autoStart.PointsTo(path);
 
         AutoStartNote.Text = stale
-            ? "登録されているのは別の場所の Glosslay です。入れ直すと、いま使っているものに切り替わります。"
+            ? T("登録されているのは別の場所の Glosslay です。入れ直すと、いま使っているものに切り替わります。")
             : string.Empty;
         AutoStartNote.Visibility = stale ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -1697,7 +1708,7 @@ private void StartHotkey()
             TargetList.SelectedIndex = 0;
         }
 
-        StatusText.Text = $"対象 {targets.Count} 件を検出しました。";
+        StatusText.Text = T("対象 {0} 件を検出しました。", targets.Count);
     }
 
     // ===== キャプチャ =====
@@ -1723,7 +1734,7 @@ private void StartHotkey()
     {
         if (TargetList.SelectedItem is not CaptureTarget target)
         {
-            StatusText.Text = "対象が選択されていません。";
+            StatusText.Text = T("対象が選択されていません。");
             return;
         }
 
@@ -1732,11 +1743,11 @@ private void StartHotkey()
         {
             for (var remaining = (int)delay.TotalSeconds; remaining > 0; remaining--)
             {
-                StatusText.Text = $"{remaining} 秒後にキャプチャします… 対象のゲームへ切り替えてください。";
+                StatusText.Text = T("{0} 秒後にキャプチャします… 対象のゲームへ切り替えてください。", remaining);
                 await Task.Delay(TimeSpan.FromSeconds(1)).ConfigureAwait(true);
             }
 
-            StatusText.Text = "キャプチャ中…";
+            StatusText.Text = T("キャプチャ中…");
 
             var startWatch = Stopwatch.StartNew();
             var capture = await EnsureCaptureAsync(target).ConfigureAwait(true);
@@ -1751,8 +1762,8 @@ private void StartHotkey()
         }
         catch (OperationCanceledException)
         {
-            StatusText.Text = "フレームが 5 秒以内に届きませんでした。"
-                + "排他フルスクリーンの場合は「モニタ全体」へ切り替えて試してください（FR-CAP-03）。";
+            StatusText.Text = T("フレームが 5 秒以内に届きませんでした。")
+                + T("排他フルスクリーンの場合は「モニタ全体」へ切り替えて試してください（FR-CAP-03）。");
         }
         finally
         {
@@ -1827,7 +1838,7 @@ private void StartHotkey()
     private void OnCaptureClosed(object? sender, EventArgs e)
         => Dispatcher.BeginInvoke(() =>
         {
-            StatusText.Text = "対象が閉じられました。一覧を更新してください。";
+            StatusText.Text = T("対象が閉じられました。一覧を更新してください。");
             ReleaseCapture();
         });
 
@@ -1838,18 +1849,18 @@ private void StartHotkey()
 
         var nonBlackRatio = CalculateNonBlackRatio(frame);
         var blackWarning = nonBlackRatio < 0.001
-            ? "  ← ほぼ黒。取得に失敗している可能性が高い（FR-CAP-03）"
+            ? T("  ← ほぼ黒。取得に失敗している可能性が高い（FR-CAP-03）")
             : string.Empty;
 
         ResultText.Text = string.Join(Environment.NewLine,
-            $"対象           : {target}",
-            $"サイズ         : {frame.Width} x {frame.Height} (stride={frame.Stride})",
-            $"枠を消せたか   : {(capture.IsBorderRemoved ? "はい" : "いいえ（OS が許可しなかった）")}",
-            $"セッション開始 : {startMs:F1} ms",
-            $"フレーム取得   : {frameMs:F1} ms",
-            $"非黒ピクセル   : {nonBlackRatio * 100:F1} %{blackWarning}");
+            T("対象           : {0}", target),
+            T("サイズ         : {0} x {1} (stride={2})", frame.Width, frame.Height, frame.Stride),
+            T("枠を消せたか   : {0}", (capture.IsBorderRemoved ? T("はい") : T("いいえ（OS が許可しなかった）"))),
+            T("セッション開始 : {0:F1} ms", startMs),
+            T("フレーム取得   : {0:F1} ms", frameMs),
+            T("非黒ピクセル   : {0:F1} %{1}", nonBlackRatio * 100, blackWarning));
 
-        StatusText.Text = "キャプチャしました。";
+        StatusText.Text = T("キャプチャしました。");
     }
 
     /// <summary>プレビューを最新のフレームに差し替える。結果欄は書き換えない。</summary>
@@ -2044,7 +2055,7 @@ private void StartHotkey()
     {
         _region = null;
         SelectionRectangle.Visibility = Visibility.Collapsed;
-        StatusText.Text = "範囲の指定を解除しました。画像全体を OCR します。";
+        StatusText.Text = T("範囲の指定を解除しました。画像全体を OCR します。");
     }
 
     private void OnSelectionStart(object sender, MouseButtonEventArgs e)
@@ -2086,13 +2097,13 @@ private void StartHotkey()
         _region = ToSourceRegion(_dragOrigin, end);
         if (_region is { } region)
         {
-            StatusText.Text = $"範囲を指定しました: {region.X},{region.Y} "
-                + $"{region.Width}x{region.Height}（元画像の画素）";
+            StatusText.Text = T("範囲を指定しました: {0},{1} {2}x{3}（元画像の画素）",
+                region.X, region.Y, region.Width, region.Height);
         }
         else
         {
             SelectionRectangle.Visibility = Visibility.Collapsed;
-            StatusText.Text = "範囲が小さすぎます。指定を解除しました。";
+            StatusText.Text = T("範囲が小さすぎます。指定を解除しました。");
         }
     }
 
@@ -2201,12 +2212,12 @@ private void StartHotkey()
     {
         if (_lastFrame is null || _lastBitmap is null)
         {
-            StatusText.Text = "先にキャプチャしてください。";
+            StatusText.Text = T("先にキャプチャしてください。");
             return;
         }
 
         OcrButton.IsEnabled = false;
-        StatusText.Text = "OCR 実行中…";
+        StatusText.Text = T("OCR 実行中…");
         try
         {
             var (image, options, offsetX, offsetY) = PrepareForOcr(_lastFrame);
@@ -2218,15 +2229,15 @@ private void StartHotkey()
 
             PreviewImage.Source = DrawBoxes(_lastBitmap, lines);
             ResultText.Text = string.Join(Environment.NewLine,
-                $"前処理     : {options}",
-                $"OCR 入力   : {image.Width}x{image.Height}"
-                    + (_region is { } r ? $"（範囲 {r.X},{r.Y} {r.Width}x{r.Height} を切り出し）" : "（全体）"),
-                $"処理時間   : {result.Elapsed.TotalMilliseconds:F0} ms",
+                T("前処理     : {0}", options),
+                T("OCR 入力   : {0}x{1}", image.Width, image.Height)
+                    + (_region is { } r ? T("（範囲 {0},{1} {2}x{3} を切り出し）", r.X, r.Y, r.Width, r.Height) : T("（全体）")),
+                T("処理時間   : {0:F0} ms", result.Elapsed.TotalMilliseconds),
                 string.Empty,
                 FormatOcrResult(lines));
 
-            StatusText.Text = $"OCR 完了: {lines.Count} 行 / "
-                + $"{result.Elapsed.TotalMilliseconds:F0} ms（{_ocrEngine.Name}）";
+            StatusText.Text = T("OCR 完了: {0} 行 / {1:F0} ms（{2}）",
+                lines.Count, result.Elapsed.TotalMilliseconds, _ocrEngine.Name);
         }
         finally
         {
@@ -2253,15 +2264,15 @@ private void StartHotkey()
         var pair = Languages.PairName(_translationOptions.Source, _translationOptions.Main);
         TranslatorStateText.Text = ReferenceEquals(active, _cloudTranslator)
             ? active.IsConfigured
-                ? $"{active.Name} — 使用中（{pair}）"
+                ? T("{0} — 使用中（{1}）", active.Name, pair)
                 : readiness == LocalReadiness.CloudOnlyPair
-                    ? $"{active.Name} — キー未登録のため訳せません（{pair}はクラウド翻訳でのみ訳せます）"
-                    : $"{active.Name} — キー未登録のため訳せません（「自動」にすればローカルで動きます）"
+                    ? T("{0} — キー未登録のため訳せません（{1}はクラウド翻訳でのみ訳せます）", active.Name, pair)
+                    : T("{0} — キー未登録のため訳せません（「自動」にすればローカルで動きます）", active.Name)
             : readiness switch
             {
-                LocalReadiness.Ready => $"{active.Name} — 使用中（{pair}）",
-                LocalReadiness.ModelMissing => $"{active.Name} — {pair}の翻訳モデルが入っていません",
-                _ => $"{active.Name} — {pair}はローカルでは訳せません（クラウド翻訳でのみ訳せます）",
+                LocalReadiness.Ready => T("{0} — 使用中（{1}）", active.Name, pair),
+                LocalReadiness.ModelMissing => T("{0} — {1}の翻訳モデルが入っていません", active.Name, pair),
+                _ => T("{0} — {1}はローカルでは訳せません（クラウド翻訳でのみ訳せます）", active.Name, pair),
             };
 
         DeleteApiKeyButton.IsEnabled = configured;
@@ -2279,7 +2290,7 @@ private void StartHotkey()
         // Password は読んだ直後に使い切り、変数にも UI にも残さない。
         if (string.IsNullOrWhiteSpace(ApiKeyBox.Password))
         {
-            StatusText.Text = "APIキーが空です。";
+            StatusText.Text = T("APIキーが空です。");
             return;
         }
 
@@ -2287,7 +2298,7 @@ private void StartHotkey()
         ApiKeyBox.Clear();
 
         RefreshTranslatorState();
-        StatusText.Text = "APIキーを暗号化して保存しました。「翻訳を実行」で試せます。";
+        StatusText.Text = T("APIキーを暗号化して保存しました。「翻訳を実行」で試せます。");
     }
 
     /// <summary>バックエンドの選択が変わった（FR-TRN-01 / FR-TRN-06）。</summary>
@@ -2318,9 +2329,9 @@ private void StartHotkey()
 
         StatusText.Text = choice switch
         {
-            TranslationBackendChoice.CloudOnly => "クラウドのみを使います。失敗しても切り替えません。",
-            TranslationBackendChoice.LocalOnly => "ローカルのみを使います。通信しません。",
-            _ => "自動で切り替えます（クラウドが失敗したらローカルへ）。",
+            TranslationBackendChoice.CloudOnly => T("クラウドのみを使います。失敗しても切り替えません。"),
+            TranslationBackendChoice.LocalOnly => T("ローカルのみを使います。通信しません。"),
+            _ => T("自動で切り替えます（クラウドが失敗したらローカルへ）。"),
         };
     }
 
@@ -2419,7 +2430,7 @@ private void StartHotkey()
             _usageOverlayOptions.Save();
         }
 
-        StatusText.Text = "使用量の常駐表示: " + ApplyCornerOverlay(enabled);
+        StatusText.Text = T("使用量の常駐表示: ") + ApplyCornerOverlay(enabled);
     }
 
     /// <summary>
@@ -2436,7 +2447,7 @@ private void StartHotkey()
             _usageOverlayOptions.Save();
         }
 
-        StatusText.Text = "処理時間の表示: " + ApplyCornerOverlay(enabled);
+        StatusText.Text = T("処理時間の表示: ") + ApplyCornerOverlay(enabled);
     }
 
     private void OnProcessingTimeOverlayChanged(object sender, RoutedEventArgs e) =>
@@ -2452,23 +2463,28 @@ private void StartHotkey()
         {
             _usageOverlay?.Close();
             _usageOverlay = null;
-            return "消しました。";
+            return T("消しました。");
         }
 
-        _usageOverlay ??= new UsageOverlayWindow();
+        if (_usageOverlay is null)
+        {
+            _usageOverlay = new UsageOverlayWindow();
+            UiLanguage.ApplyTo(_usageOverlay);
+        }
+
         _usageOverlay.Show();
         _usageOverlay.Apply(_usageOverlayOptions);
         RefreshUsage();
 
         if (!turnedOn)
         {
-            return "消しました。";
+            return T("消しました。");
         }
 
         // クリックスルーが効いていなければ、ゲームのクリックを奪う。黙って出さない。
         return _usageOverlay.StyleState.IsComplete
-            ? "画面の隅に出しました（クリックは下へ通ります）。"
-            : "クリックスルーが効いていません。消すことをおすすめします。";
+            ? T("画面の隅に出しました（クリックは下へ通ります）。")
+            : T("クリックスルーが効いていません。消すことをおすすめします。");
     }
 
     private void OnUsageOverlayChanged(object sender, RoutedEventArgs e) =>
@@ -2479,12 +2495,12 @@ private void StartHotkey()
         var path = JsonSettings.PathOf(UsageStore.FileName);
         if (!File.Exists(path))
         {
-            StatusText.Text = "まだ記録がありません。翻訳を 1 回実行すると作られます。";
+            StatusText.Text = T("まだ記録がありません。翻訳を 1 回実行すると作られます。");
             return;
         }
 
         Process.Start(new ProcessStartInfo(path) { UseShellExecute = true })?.Dispose();
-        StatusText.Text = $"usage.json を開きました（直近 {UsageStore.KeepDays} 日ぶん。送信はしません）。";
+        StatusText.Text = T("usage.json を開きました（直近 {0} 日ぶん。送信はしません）。", UsageStore.KeepDays);
     }
 
     // ===== 細かい設定（FR-MOD-03 / 11 / 12・FR-OVL-05 / 06） =====
@@ -2524,13 +2540,13 @@ private void StartHotkey()
         _suppressTuningChange = true;
 
         var interval = _watchOptions.Interval.TotalMilliseconds.ToString("0", CultureInfo.InvariantCulture);
-        SelectByTag(WatchIntervalCombo, interval, $"{_watchOptions.Interval.TotalSeconds:0.#} 秒");
+        SelectByTag(WatchIntervalCombo, interval, T("{0:0.#} 秒", _watchOptions.Interval.TotalSeconds));
 
         var threshold = _watchOptions.Threshold.ToString("0.###", CultureInfo.InvariantCulture);
         SelectByTag(WatchThresholdCombo, threshold, threshold);
 
         var dwell = _cursorOptions.DwellTime.TotalMilliseconds.ToString("0", CultureInfo.InvariantCulture);
-        SelectByTag(DwellTimeCombo, dwell, $"{_cursorOptions.DwellTime.TotalSeconds:0.#} 秒");
+        SelectByTag(DwellTimeCombo, dwell, T("{0:0.#} 秒", _cursorOptions.DwellTime.TotalSeconds));
 
         var region = $"{_cursorOptions.Width}x{_cursorOptions.Height}";
         SelectByTag(CursorRegionCombo, region, region);
@@ -2538,7 +2554,7 @@ private void StartHotkey()
         SelectByTag(TextSizeCombo, _overlayOptions.TextSize.ToString(), _overlayOptions.TextSize.ToString());
 
         var hide = _overlayOptions.AutoHideAfter.TotalSeconds.ToString("0", CultureInfo.InvariantCulture);
-        SelectByTag(AutoHideCombo, hide, $"{hide} 秒");
+        SelectByTag(AutoHideCombo, hide, T("{0} 秒", hide));
 
         SelectByTag(UsageCornerCombo, _usageOverlayOptions.Corner.ToString(),
             _usageOverlayOptions.Corner.ToString());
@@ -2571,7 +2587,7 @@ private void StartHotkey()
             SetAutoWatch(true);
         }
 
-        StatusText.Text = $"自動監視: {_watchOptions.Interval.TotalSeconds:0.#} 秒ごと / 感度 {_watchOptions.Threshold:0.###}";
+        StatusText.Text = T("自動監視: {0:0.#} 秒ごと / 感度 {1:0.###}", _watchOptions.Interval.TotalSeconds, _watchOptions.Threshold);
     }
 
     private void OnCursorTuningChanged(object sender, SelectionChangedEventArgs e)
@@ -2600,7 +2616,7 @@ private void StartHotkey()
             SetCursorDwell(true);
         }
 
-        StatusText.Text = $"カーソル静止: {_cursorOptions.DwellTime.TotalMilliseconds:F0} ms / "
+        StatusText.Text = T("カーソル静止: {0:F0} ms / ", _cursorOptions.DwellTime.TotalMilliseconds)
             + $"{_cursorOptions.Width}x{_cursorOptions.Height}";
     }
 
@@ -2630,15 +2646,15 @@ private void StartHotkey()
             overlay.Refresh();
         }
 
-        StatusText.Text = $"訳文の見た目: 文字 {TextSizeLabel(_overlayOptions.TextSize)} / "
-            + $"{_overlayOptions.AutoHideAfter.TotalSeconds:F0} 秒で消える";
+        StatusText.Text = T("訳文の見た目: 文字 {0} / ", TextSizeLabel(_overlayOptions.TextSize))
+            + T("{0:F0} 秒で消える", _overlayOptions.AutoHideAfter.TotalSeconds);
     }
 
     private static string TextSizeLabel(OverlayTextSize size) => size switch
     {
-        OverlayTextSize.Small => "小",
-        OverlayTextSize.Large => "大",
-        _ => "中",
+        OverlayTextSize.Small => T("小"),
+        OverlayTextSize.Large => T("大"),
+        _ => T("中"),
     };
 
     private void OnUsageCornerChanged(object sender, SelectionChangedEventArgs e)
@@ -2665,11 +2681,11 @@ private void StartHotkey()
         var available = WindowsOcrEngine.AvailableLanguages;
         var source = _translationOptions.Source;
         var name = Languages.NameOf(source);
-        var list = available.Count > 0 ? string.Join(" / ", available) : "（ひとつも入っていません）";
+        var list = available.Count > 0 ? string.Join(" / ", available) : T("（ひとつも入っていません）");
 
         OcrLanguageNote.Text = WindowsOcrEngine.LanguageFor(source) is { } match
-            ? $"高速モードでは、原文の言語（{name}）を {match} の認識器で読みます。入っている言語: {list}"
-            : $"高速モードで{name}を読むには、Windows に{name}を追加してください（下のボタン）。入っている言語: {list}";
+            ? T("高速モードでは、原文の言語（{0}）を {1} の認識器で読みます。入っている言語: {2}", name, match, list)
+            : T("高速モードで{0}を読むには、Windows に{1}を追加してください（下のボタン）。入っている言語: {2}", name, name, list);
     }
 
     private void OnDeleteApiKeyClick(object sender, RoutedEventArgs e)
@@ -2678,7 +2694,7 @@ private void StartHotkey()
         ApiKeyBox.Clear();
 
         RefreshTranslatorState();
-        StatusText.Text = "APIキーを削除しました。";
+        StatusText.Text = T("APIキーを削除しました。");
     }
 
     // ===== メイン言語と原文の言語（FR-SYS-03 / FR-OCR-02 / RULES.md 🟡-1） =====
@@ -2706,7 +2722,7 @@ private void StartHotkey()
         var sources = Languages.SourceOptions.Where(o => !Languages.SameLanguage(o.Tag, main)).ToList();
         if (!sources.Exists(o => Languages.SameLanguage(o.Tag, source)))
         {
-            sources.Add(new SourceLanguageOption(source, source));
+            sources.Add(new SourceLanguageOption(source));
         }
 
         _suppressLanguageChange = true;
@@ -2745,22 +2761,22 @@ private void StartHotkey()
         var warning = availability is PairAvailability.CloudOnly or PairAvailability.LocalLowQuality;
         PairNote.Text = availability switch
         {
-            PairAvailability.CloudOnly => $"{pair}はクラウド翻訳でのみ訳せます。"
+            PairAvailability.CloudOnly => T("{0}はクラウド翻訳でのみ訳せます。", pair)
                 + (localOnly
-                    ? "「ローカルのみ」では訳せないため、使うバックエンドを「自動」か「クラウドのみ」にしてください。"
+                    ? T("「ローカルのみ」では訳せないため、使うバックエンドを「自動」か「クラウドのみ」にしてください。")
                     : _cloudTranslator.IsConfigured
-                        ? "登録済みのAPIキーで訳します。"
-                        : "クラウド翻訳のAPIキーを作成し、下で登録してください。"),
+                        ? T("登録済みのAPIキーで訳します。")
+                        : T("クラウド翻訳のAPIキーを作成し、下で登録してください。")),
 
             PairAvailability.LocalLowQuality =>
-                "翻訳精度が大きく下がります。クラウド機能の選択をお勧めします。"
-                + $"（{pair}はキーが無くても訳せますが、英語を経由する 2 段の翻訳になります）",
+                T("翻訳精度が大きく下がります。クラウド機能の選択をお勧めします。")
+                + T("（{0}はキーが無くても訳せますが、英語を経由する 2 段の翻訳になります）", pair),
 
-            PairAvailability.Same => "原文の言語とメイン言語が同じです。",
+            PairAvailability.Same => T("原文の言語とメイン言語が同じです。"),
 
             _ => LocalReadiness == LocalReadiness.ModelMissing
-                ? $"{pair}はキーが無くても訳せますが、翻訳モデルが入っていません。"
-                : $"{pair}はAPIキーが無くても訳せます。",
+                ? T("{0}はキーが無くても訳せますが、翻訳モデルが入っていません。", pair)
+                : T("{0}はAPIキーが無くても訳せます。", pair),
         };
         PairNote.Style = (Style)FindResource(warning ? "Warning" : "Hint");
 
@@ -2769,8 +2785,8 @@ private void StartHotkey()
         BackendLocalRadio.IsEnabled = !cloudOnly;
         BackendNote.Visibility = cloudOnly ? Visibility.Visible : Visibility.Collapsed;
         BackendNote.Text = localOnly
-            ? $"いまは「ローカルのみ」のため、{pair}は訳せません。「自動」か「クラウドのみ」を選んでください。"
-            : $"{pair}はクラウド翻訳でのみ訳せるため、「ローカルのみ」は選べません。";
+            ? T("いまは「ローカルのみ」のため、{0}は訳せません。「自動」か「クラウドのみ」を選んでください。", pair)
+            : T("{0}はクラウド翻訳でのみ訳せるため、「ローカルのみ」は選べません。", pair);
     }
 
     private void OnMainLanguageChanged(object sender, SelectionChangedEventArgs e)
@@ -2787,13 +2803,47 @@ private void StartHotkey()
         _translationOptions = _translationOptions with { SourceLanguage = _translationOptions.Source };
         _translationOptions.Save();
 
+        // メイン言語は画面の言語も兼ねる（FR-SYS-03）。その場で切り替え、コードで作る文言も作り直す。
+        Localization.UiText.SetLanguage(_translationOptions.Main);
+        ApplyUiLanguage();
+
         RefreshLanguageChoices();
         OnLanguagePairChanged(previousSource);
 
-        StatusText.Text = $"メイン言語を{option.DisplayName}にしました（{Languages.PairName(_translationOptions.Source, _translationOptions.Main)}）。"
+        StatusText.Text = T("メイン言語を{0}にしました（{1}）。", option.DisplayName, Languages.PairName(_translationOptions.Source, _translationOptions.Main))
             + (Languages.SameLanguage(previousSource, _translationOptions.Source)
                 ? string.Empty
-                : $"原文の言語は{Languages.NameOf(_translationOptions.Source)}にしました。");
+                : T("原文の言語は{0}にしました。", Languages.NameOf(_translationOptions.Source)));
+    }
+
+    /// <summary>
+    /// 画面の言語を、XAML の外で作っている文言とフォントに反映する（FR-SYS-03）。
+    /// </summary>
+    /// <remarks>
+    /// <para>XAML の文言（<c>{local:T …}</c>）は自分で切り替わる。ここで作り直すのは、
+    /// コードで組み立てている状態の表示・ホットキーの説明・使用量・対象の説明。
+    /// 結果の欄（工程ごとの内訳）は、次に翻訳したときに新しい言語で出る。</para>
+    /// <para><b>ウィンドウの言語と字体も合わせる</b>（<see cref="UiLanguage"/>）。訳文を重ねる窓も同じ。</para>
+    /// </remarks>
+    private void ApplyUiLanguage()
+    {
+        UiLanguage.ApplyTo(this);
+        if (_overlay is not null)
+        {
+            UiLanguage.ApplyTo(_overlay);
+        }
+
+        if (_usageOverlay is not null)
+        {
+            UiLanguage.ApplyTo(_usageOverlay);
+        }
+
+        RefreshTranslatorState();
+        RefreshOcrEngineState();
+        RefreshUsage();
+        UpdateCornerOverlayText();
+        RefreshHotkeyText();
+        UpdateProfileTargetText();
     }
 
     private void OnSourceLanguageChanged(object sender, SelectionChangedEventArgs e)
@@ -2804,8 +2854,8 @@ private void StartHotkey()
         }
 
         SetSourceLanguage(option.Tag);
-        StatusText.Text = $"原文の言語を{option.DisplayName}にしました"
-            + $"（{Languages.PairName(_translationOptions.Source, _translationOptions.Main)}）。";
+        StatusText.Text = T("原文の言語を{0}にしました", option.DisplayName)
+            + T("（{0}）。", Languages.PairName(_translationOptions.Source, _translationOptions.Main));
     }
 
     /// <summary>
@@ -2871,7 +2921,7 @@ private void StartHotkey()
         _cloudTranslator = CreateCloudTranslator();
         RefreshTranslatorState();
 
-        StatusText.Text = "gemini.json を開きました。保存すると次の翻訳から反映されます。";
+        StatusText.Text = T("gemini.json を開きました。保存すると次の翻訳から反映されます。");
     }
 
     private async void OnTranslateClick(object sender, RoutedEventArgs e)
@@ -2881,7 +2931,7 @@ private void StartHotkey()
     {
         if (_lastOcrLines.Count == 0)
         {
-            StatusText.Text = "先に OCR を実行してください。";
+            StatusText.Text = T("先に OCR を実行してください。");
             return;
         }
 
@@ -2892,7 +2942,7 @@ private void StartHotkey()
             LineJoiner.Join(TextAggregator.InReadingOrder(_lastOcrLines)).Select(line => line.Text));
 
         TranslateButton.IsEnabled = false;
-        StatusText.Text = "翻訳中…";
+        StatusText.Text = T("翻訳中…");
         try
         {
             // ここは検証用のボタン。FR-TRN-06 の切り替えは入れていない。
@@ -2910,20 +2960,20 @@ private void StartHotkey()
             RefreshUsage();
 
             ResultText.Text = string.Join(Environment.NewLine,
-                $"バックエンド : {ActiveTranslator.Name}",
-                $"処理時間     : {result.Elapsed.TotalMilliseconds:F0} ms"
-                    + (result.TotalTokens is { } tokens ? $" / {tokens} トークン" : string.Empty),
-                $"状態         : {DescribeOutcome(result)}",
+                T("バックエンド : {0}", ActiveTranslator.Name),
+                T("処理時間     : {0:F0} ms", result.Elapsed.TotalMilliseconds)
+                    + (result.TotalTokens is { } tokens ? T(" / {0} トークン", tokens) : string.Empty),
+                T("状態         : {0}", DescribeOutcome(result)),
                 string.Empty,
-                "--- 原文 ---",
+                T("--- 原文 ---"),
                 source,
                 string.Empty,
-                "--- 訳文 ---",
-                result.IsSuccess ? result.Text : "（なし）");
+                T("--- 訳文 ---"),
+                result.IsSuccess ? result.Text : T("（なし）"));
 
             StatusText.Text = result.IsSuccess
-                ? $"翻訳完了: {result.Elapsed.TotalMilliseconds:F0} ms"
-                : $"翻訳失敗: {result.Message}";
+                ? T("翻訳完了: {0:F0} ms", result.Elapsed.TotalMilliseconds)
+                : T("翻訳失敗: {0}", result.Message);
         }
         finally
         {
@@ -2942,15 +2992,15 @@ private void StartHotkey()
     {
         var state = result.Outcome switch
         {
-            TranslationOutcome.Succeeded => "成功",
-            TranslationOutcome.NotConfigured => "キー未登録",
-            TranslationOutcome.RateLimited => "利用上限（HTTP 429）",
-            TranslationOutcome.NetworkError => "接続できない",
-            TranslationOutcome.Timeout => "応答なし（制限時間切れ）",
-            TranslationOutcome.Busy => "混雑（HTTP 503）",
-            TranslationOutcome.ServiceError => "サービスエラー",
-            TranslationOutcome.Blocked => "応答が拒否された",
-            TranslationOutcome.Unsupported => "原文の言語に非対応",
+            TranslationOutcome.Succeeded => T("成功"),
+            TranslationOutcome.NotConfigured => T("キー未登録"),
+            TranslationOutcome.RateLimited => T("利用上限（HTTP 429）"),
+            TranslationOutcome.NetworkError => T("接続できない"),
+            TranslationOutcome.Timeout => T("応答なし（制限時間切れ）"),
+            TranslationOutcome.Busy => T("混雑（HTTP 503）"),
+            TranslationOutcome.ServiceError => T("サービスエラー"),
+            TranslationOutcome.Blocked => T("応答が拒否された"),
+            TranslationOutcome.Unsupported => T("原文の言語に非対応"),
             _ => result.Outcome.ToString(),
         };
 
@@ -2960,7 +3010,7 @@ private void StartHotkey()
         }
 
         return result.ShouldFallBack
-            ? state + "（FR-TRN-06 でローカルNMTへ自動で切り替える箇所。自動化は未実装）"
+            ? state + T("（FR-TRN-06 でローカルNMTへ自動で切り替える箇所。自動化は未実装）")
             : state;
     }
 
@@ -2968,8 +3018,8 @@ private void StartHotkey()
     {
         if (lines.Count == 0)
         {
-            return "文字が検出されませんでした。"
-                + "範囲を絞る、または前処理（拡大・コントラスト）を試してください。";
+            return T("文字が検出されませんでした。")
+                + T("範囲を絞る、または前処理（拡大・コントラスト）を試してください。");
         }
 
         return string.Join(Environment.NewLine, TextAggregator.InReadingOrder(lines)
@@ -3009,13 +3059,13 @@ private void StartHotkey()
     {
         if (TargetList.SelectedItem is not CaptureTarget target)
         {
-            StatusText.Text = "対象が選択されていません。";
+            StatusText.Text = T("対象が選択されていません。");
             return;
         }
 
         if (!CaptureTargetBounds.TryGet(target, out var bounds))
         {
-            StatusText.Text = "対象の画面上の位置を取得できませんでした。";
+            StatusText.Text = T("対象の画面上の位置を取得できませんでした。");
             return;
         }
 
@@ -3024,13 +3074,13 @@ private void StartHotkey()
         {
             // 押した時点の画面を撮り直す。前のキャプチャを使い回すと、
             // ゲーム内で画面を切り替えたときに古い内容を表示してしまう（FR-MOD-01）。
-            StatusText.Text = "キャプチャ中…";
+            StatusText.Text = T("キャプチャ中…");
             var capture = await EnsureCaptureAsync(target).ConfigureAwait(true);
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             var frame = await capture.GetNextFrameAsync(timeout.Token).ConfigureAwait(true);
             UpdatePreview(target, frame);
 
-            StatusText.Text = "OCR 実行中…";
+            StatusText.Text = T("OCR 実行中…");
             var (image, options, offsetX, offsetY) = PrepareForOcr(frame);
             var result = await RecognizeAsync(image).ConfigureAwait(true);
 
@@ -3055,25 +3105,25 @@ private void StartHotkey()
             // P0-6 の検証項目。設定したつもりで終わらせず、実際の値を出す。
             var style = overlay.StyleState;
             ResultText.Text = string.Join(Environment.NewLine,
-                $"重ねた先       : {bounds.X},{bounds.Y} {bounds.Width}x{bounds.Height}（物理px）",
-                $"認識画像       : {frame.Width}x{frame.Height}（このボタンで撮り直したもの）",
-                $"表示した       : {detected.Count} 行 → {lines.Count} 件"
-                    + $"（{lines.Count(l => l.SourceLineCount > 1)} 件が結合・FR-TRN-10）",
-                $"前処理         : {options}",
-                $"自動で消える   : {overlay.AutoHideAfter.TotalSeconds:F0} 秒後（FR-OVL-06）",
-                $"前面の追従     : {(keepVisibleFor is null ? "なし（モニタ全体のため）" : "ゲームと操作画面のみ表示")}",
+                T("重ねた先       : {0},{1} {2}x{3}（物理px）", bounds.X, bounds.Y, bounds.Width, bounds.Height),
+                T("認識画像       : {0}x{1}（このボタンで撮り直したもの）", frame.Width, frame.Height),
+                T("表示した       : {0} 行 → {1} 件", detected.Count, lines.Count)
+                    + T("（{0} 件が結合・FR-TRN-10）", lines.Count(l => l.SourceLineCount > 1)),
+                T("前処理         : {0}", options),
+                T("自動で消える   : {0:F0} 秒後（FR-OVL-06）", overlay.AutoHideAfter.TotalSeconds),
+                T("前面の追従     : {0}", (keepVisibleFor is null ? T("なし（モニタ全体のため）") : T("ゲームと操作画面のみ表示"))),
                 string.Empty,
-                "拡張スタイルの実測値（RULES.md が必須と定める4つ）",
-                $"  WS_EX_LAYERED     (透過)          : {Mark(style.IsLayered)}",
-                $"  WS_EX_TRANSPARENT (クリックスルー): {Mark(style.IsClickThrough)}",
-                $"  WS_EX_NOACTIVATE  (フォーカス維持): {Mark(style.DoesNotActivate)}",
-                $"  WS_EX_TOOLWINDOW  (Alt+Tab非表示) : {Mark(style.IsHiddenFromAltTab)}",
+                T("拡張スタイルの実測値（RULES.md が必須と定める4つ）"),
+                T("  WS_EX_LAYERED     (透過)          : {0}", Mark(style.IsLayered)),
+                T("  WS_EX_TRANSPARENT (クリックスルー): {0}", Mark(style.IsClickThrough)),
+                T("  WS_EX_NOACTIVATE  (フォーカス維持): {0}", Mark(style.DoesNotActivate)),
+                T("  WS_EX_TOOLWINDOW  (Alt+Tab非表示) : {0}", Mark(style.IsHiddenFromAltTab)),
                 string.Empty,
                 style.IsComplete
-                    ? "4つとも設定済み。実際に効くかはゲーム上で操作して確認すること。"
-                    : "★ 不足があります。要件を満たしていません。");
+                    ? T("4つとも設定済み。実際に効くかはゲーム上で操作して確認すること。")
+                    : T("★ 不足があります。要件を満たしていません。"));
 
-            StatusText.Text = $"オーバーレイ表示中: {detected.Count} 行 → {lines.Count} 件 / "
+            StatusText.Text = T("オーバーレイ表示中: {0} 行 → {1} 件 / ", detected.Count, lines.Count)
                 + $"{result.Elapsed.TotalMilliseconds:F0} ms";
         }
         finally
@@ -3081,7 +3131,7 @@ private void StartHotkey()
             OverlayButton.IsEnabled = true;
         }
 
-        static string Mark(bool value) => value ? "OK" : "未設定";
+        static string Mark(bool value) => value ? "OK" : T("未設定");
     }
 
     /// <summary>
@@ -3101,6 +3151,7 @@ private void StartHotkey()
         {
             // 設定（FR-OVL-05 / 06）は作った時点で渡す。
             _overlay = new OverlayWindow { Options = _overlayOptions };
+            UiLanguage.ApplyTo(_overlay);
         }
 
         return _overlay;
@@ -3146,13 +3197,13 @@ private void StartHotkey()
             var target = ResolveHotkeyTarget();
             if (target is null)
             {
-                StatusText.Text = "ホットキー: 翻訳する画面を特定できませんでした。";
+                StatusText.Text = T("ホットキー: 翻訳する画面を特定できませんでした。");
                 return;
             }
 
             if (!CaptureTargetBounds.TryGet(target, out var bounds))
             {
-                StatusText.Text = $"ホットキー: {target.DisplayName} の画面上の位置を取得できませんでした。";
+                StatusText.Text = T("ホットキー: {0} の画面上の位置を取得できませんでした。", target.DisplayName);
                 return;
             }
 
@@ -3161,7 +3212,7 @@ private void StartHotkey()
             ScreenPoint cursor = default;
             if (useCursorWindow && !CursorPosition.TryGet(out cursor))
             {
-                StatusText.Text = "ホットキー: カーソルの位置を取得できませんでした。";
+                StatusText.Text = T("ホットキー: カーソルの位置を取得できませんでした。");
                 return;
             }
 
@@ -3185,7 +3236,7 @@ private void StartHotkey()
                 : null;
 
             // ここで撮り終えている。受け付けたことをゲーム画面の上で返す。
-            overlay.ShowMessage("翻訳中…", bounds, frame.Width, frame.Height, keepVisibleFor);
+            overlay.ShowMessage(T("翻訳中…"), bounds, frame.Width, frame.Height, keepVisibleFor);
 
             FrameRect? window = null;
             if (useCursorWindow)
@@ -3196,8 +3247,8 @@ private void StartHotkey()
                         _cursorOptions.Width, _cursorOptions.Height, out var resolved))
                 {
                     overlay.ShowMessage(
-                        "カーソルが対象の画面の外にあります", bounds, frame.Width, frame.Height, keepVisibleFor);
-                    StatusText.Text = $"ホットキー: カーソルが {target.DisplayName} の外にあります。";
+                        T("カーソルが対象の画面の外にあります"), bounds, frame.Width, frame.Height, keepVisibleFor);
+                    StatusText.Text = T("ホットキー: カーソルが {0} の外にあります。", target.DisplayName);
                     return;
                 }
 
@@ -3223,8 +3274,8 @@ private void StartHotkey()
                 _processingTimes.Record(ocr.Elapsed, translation: null);
                 UpdateCornerOverlayText();
 
-                overlay.ShowMessage("文字が見つかりませんでした", bounds, frame.Width, frame.Height, keepVisibleFor);
-                StatusText.Text = $"ホットキー: {target.DisplayName} に文字が見つかりませんでした。";
+                overlay.ShowMessage(T("文字が見つかりませんでした"), bounds, frame.Width, frame.Height, keepVisibleFor);
+                StatusText.Text = T("ホットキー: {0} に文字が見つかりませんでした。", target.DisplayName);
                 return;
             }
 
@@ -3267,8 +3318,8 @@ private void StartHotkey()
                 // 原文の言語の行が 1 つも無いなら、設定がゲームと合っていない見込みが高い。
                 overlay.ShowMessage(
                     translated.SentCount == 0 && translated.OtherLanguageCount > 0
-                        ? $"{Languages.NameOf(_translationOptions.Source)}の文字はありませんでした（原文の言語の設定を確かめてください）"
-                        : "訳す必要のある文字はありませんでした",
+                        ? T("{0}の文字はありませんでした（原文の言語の設定を確かめてください）", Languages.NameOf(_translationOptions.Source))
+                        : T("訳す必要のある文字はありませんでした"),
                     bounds, frame.Width, frame.Height, keepVisibleFor);
             }
             else
@@ -3283,7 +3334,7 @@ private void StartHotkey()
         }
         catch (OperationCanceledException)
         {
-            StatusText.Text = "ホットキー: 画面が 5 秒以内に取得できませんでした。";
+            StatusText.Text = T("ホットキー: 画面が 5 秒以内に取得できませんでした。");
         }
         finally
         {
@@ -3321,14 +3372,14 @@ private void StartHotkey()
     /// </remarks>
     private static string ShortOutcome(TranslationOutcome outcome) => outcome switch
     {
-        TranslationOutcome.NotConfigured => "APIキーが未登録です",
-        TranslationOutcome.RateLimited => "利用上限に達しました（しばらく待つと戻ります）",
-        TranslationOutcome.NetworkError => "翻訳サービスに接続できませんでした",
-        TranslationOutcome.Timeout => "翻訳サービスから応答がありません（混雑している可能性）",
-        TranslationOutcome.Busy => "翻訳サービスが混雑しています（時間をおくと戻ります）",
-        TranslationOutcome.ServiceError => "翻訳サービスがエラーを返しました",
-        TranslationOutcome.Blocked => "翻訳が拒否されました",
-        TranslationOutcome.Unsupported => "この組み合わせはローカルでは訳せません",
+        TranslationOutcome.NotConfigured => T("APIキーが未登録です"),
+        TranslationOutcome.RateLimited => T("利用上限に達しました（しばらく待つと戻ります）"),
+        TranslationOutcome.NetworkError => T("翻訳サービスに接続できませんでした"),
+        TranslationOutcome.Timeout => T("翻訳サービスから応答がありません（混雑している可能性）"),
+        TranslationOutcome.Busy => T("翻訳サービスが混雑しています（時間をおくと戻ります）"),
+        TranslationOutcome.ServiceError => T("翻訳サービスがエラーを返しました"),
+        TranslationOutcome.Blocked => T("翻訳が拒否されました"),
+        TranslationOutcome.Unsupported => T("この組み合わせはローカルでは訳せません"),
         _ => outcome.ToString(),
     };
 
@@ -3342,12 +3393,12 @@ private void StartHotkey()
     /// </remarks>
     private string FailureMessage(TranslationOutcome outcome)
     {
-        var message = $"翻訳できませんでした: {ShortOutcome(outcome)}";
+        var message = T("翻訳できませんでした: {0}", ShortOutcome(outcome));
         var source = _translationOptions.Source;
         var main = _translationOptions.Main;
 
         return Languages.Availability(source, main) == PairAvailability.CloudOnly
-            ? $"{message}\n{Languages.PairName(source, main)}はクラウド翻訳でのみ訳せます"
+            ? message + "\n" + T("{0}はクラウド翻訳でのみ訳せます", Languages.PairName(source, main))
             : message;
     }
 
@@ -3393,7 +3444,7 @@ private void StartHotkey()
         var mismatched = translated.NumberMismatchCount;
         if (mismatched == 0)
         {
-            return "食い違いなし";
+            return T("食い違いなし");
         }
 
         var detail = new List<string>(mismatched);
@@ -3408,18 +3459,18 @@ private void StartHotkey()
             var parts = new List<string>(2);
             if (check.Missing.Count > 0)
             {
-                parts.Add($"落ちた {string.Join(",", check.Missing)}");
+                parts.Add(T("落ちた {0}", string.Join(",", check.Missing)));
             }
 
             if (check.Added.Count > 0)
             {
-                parts.Add($"増えた {string.Join(",", check.Added)}");
+                parts.Add(T("増えた {0}", string.Join(",", check.Added)));
             }
 
             detail.Add($"「{sources[i].Text}」{string.Join(" / ", parts)}");
         }
 
-        return $"★ {mismatched} 件が食い違い（原文を併記した） — {string.Join(" | ", detail)}";
+        return T("★ {0} 件が食い違い（原文を併記した） — {1}", mismatched, string.Join(" | ", detail));
     }
 
     /// <summary>
@@ -3446,7 +3497,7 @@ private void StartHotkey()
             .Select((l, i) => statuses[i] switch
             {
                 LineTranslationStatus.Skipped => l.Text,
-                LineTranslationStatus.OtherLanguage => $"{l.Text}（原文の言語と違う）",
+                LineTranslationStatus.OtherLanguage => T("{0}（原文の言語と違う）", l.Text),
                 _ => null,
             })
             .OfType<string>();
@@ -3456,12 +3507,12 @@ private void StartHotkey()
         var pairs = source
             .Select((from, i) =>
             {
-                var head = from.SourceLineCount > 1 ? $"  ⤵{from.SourceLineCount}行 {from.Text}" : $"  {from.Text}";
+                var head = from.SourceLineCount > 1 ? T("  ⤵{0}行 {1}", from.SourceLineCount, from.Text) : $"  {from.Text}";
                 return statuses[i] switch
                 {
                     LineTranslationStatus.Translated => $"{head}  →  {translated.Lines[i].Text}",
-                    LineTranslationStatus.Unchanged => $"{head}  →  （原文と同じ・重ねない）",
-                    LineTranslationStatus.Unmapped => $"{head}  →  （対応なし・重ねない）",
+                    LineTranslationStatus.Unchanged => T("{0}  →  （原文と同じ・重ねない）", head),
+                    LineTranslationStatus.Unmapped => T("{0}  →  （対応なし・重ねない）", head),
                     _ => null,
                 };
             })
@@ -3470,49 +3521,49 @@ private void StartHotkey()
         ResultText.Text = string.Join(Environment.NewLine,
             [
                 window is null
-                    ? "ホットキー     : 前面の画面を翻訳（FR-MOD-01）"
-                    : "ホットキー     : カーソルの周囲を翻訳（FR-MOD-09〜14）",
-                $"対象           : {target}",
+                    ? T("ホットキー     : 前面の画面を翻訳（FR-MOD-01）")
+                    : T("ホットキー     : カーソルの周囲を翻訳（FR-MOD-09〜14）"),
+                T("対象           : {0}", target),
                 window is { } w
-                    ? $"読んだ範囲     : {w.Width}x{w.Height} @ ({w.X},{w.Y})"
-                      + $" — 画面 {frame.Width}x{frame.Height} の {(double)(w.Width * w.Height) / (frame.Width * frame.Height) * 100:F0}%"
-                    : $"画面           : {frame.Width}x{frame.Height}（範囲指定は使わない）",
-                $"バックエンド   : {(translated.Backend.Length > 0 ? translated.Backend : ActiveTranslator.Name)}"
+                    ? T("読んだ範囲     : {0}x{1} @ ({2},{3})", w.Width, w.Height, w.X, w.Y)
+                      + T(" — 画面 {0}x{1} の {2:F0}%", frame.Width, frame.Height, (double)(w.Width * w.Height) / (frame.Width * frame.Height) * 100)
+                    : T("画面           : {0}x{1}（範囲指定は使わない）", frame.Width, frame.Height),
+                T("バックエンド   : {0}", (translated.Backend.Length > 0 ? translated.Backend : ActiveTranslator.Name))
                     + (translated.FellBackFrom is { } from
-                        ? $"（{ShortOutcome(from.Outcome)}のため切替・FR-TRN-06）"
+                        ? T("（{0}のため切替・FR-TRN-06）", ShortOutcome(from.Outcome))
                         : string.Empty),
-                $"状態           : {DescribeOutcome(translation)}",
-                $"検出           : {detectedCount} 行",
-                $"行結合         : {detectedCount} 行 → {source.Count} 件"
-                    + $"（{source.Count(l => l.SourceLineCount > 1)} 件が結合・FR-TRN-10）",
-                $"言語           : {Languages.PairName(_translationOptions.Source, _translationOptions.Main)}",
-                $"翻訳に回した   : {translated.SentCount} 件（数値・記号だけの {symbolOnly} 件"
-                    + $"・原文の言語と違う {translated.OtherLanguageCount} 件は除外）"
+                T("状態           : {0}", DescribeOutcome(translation)),
+                T("検出           : {0} 行", detectedCount),
+                T("行結合         : {0} 行 → {1} 件", detectedCount, source.Count)
+                    + T("（{0} 件が結合・FR-TRN-10）", source.Count(l => l.SourceLineCount > 1)),
+                T("言語           : {0}", Languages.PairName(_translationOptions.Source, _translationOptions.Main)),
+                T("翻訳に回した   : {0} 件（数値・記号だけの {1} 件・原文の言語と違う {2} 件は除外）",
+                    translated.SentCount, symbolOnly, translated.OtherLanguageCount)
                     + (translated.CachedCount > 0
-                        ? $" / うち {translated.CachedCount} 件は記憶から（FR-TRN-09）"
+                        ? T(" / うち {0} 件は記憶から（FR-TRN-09）", translated.CachedCount)
                         : string.Empty),
-                $"対応付け       : {translated.MappedCount}/{translated.SentCount} 件",
-                $"重ねた         : {translated.LinesToOverlay.Count} 件（訳して文字が変わったものだけ）",
-                $"数値の照合     : {DescribeNumberChecks(source, translated)}",
+                T("対応付け       : {0}/{1} 件", translated.MappedCount, translated.SentCount),
+                T("重ねた         : {0} 件（訳して文字が変わったものだけ）", translated.LinesToOverlay.Count),
+                T("数値の照合     : {0}", DescribeNumberChecks(source, translated)),
                 string.Empty,
-                $"撮影           : {captureMs,6:F0} ms",
+                T("撮影           : {0,6:F0} ms", captureMs),
                 $"OCR            : {ocrMs,6:F0} ms",
-                $"翻訳           : {translation.Elapsed.TotalMilliseconds,6:F0} ms"
-                    + (translation.TotalTokens is { } tokens ? $"（{tokens} トークン）" : string.Empty),
-                $"合計           : {totalMs,6:F0} ms（要件 1.5 秒）",
+                T("翻訳           : {0,6:F0} ms", translation.Elapsed.TotalMilliseconds)
+                    + (translation.TotalTokens is { } tokens ? T("（{0} トークン）", tokens) : string.Empty),
+                T("合計           : {0,6:F0} ms（要件 1.5 秒）", totalMs),
                 string.Empty,
-                "--- 原文 → 訳文 ---",
+                T("--- 原文 → 訳文 ---"),
                 .. pairs,
                 string.Empty,
-                $"--- 翻訳に回さなかった行 ---",
+                T("--- 翻訳に回さなかった行 ---"),
                 $"  {string.Join("  |  ", skipped)}",
             ]);
 
         StatusText.Text = translation.IsSuccess
-            ? $"ホットキー: {translated.LinesToOverlay.Count} 件を重ねた"
-              + $"（{detectedCount} 行 → {source.Count} 件中 {translated.SentCount} 件を翻訳）/ 合計 {totalMs:F0} ms"
-              + (translated.FellBackFrom is not null ? $" — {translated.Backend} へ切替" : string.Empty)
-            : $"ホットキー: 翻訳失敗 — {translation.Message}";
+            ? T("ホットキー: {0} 件を重ねた", translated.LinesToOverlay.Count)
+              + T("（{0} 行 → {1} 件中 {2} 件を翻訳）/ 合計 {3:F0} ms", detectedCount, source.Count, translated.SentCount, totalMs)
+              + (translated.FellBackFrom is not null ? T(" — {0} へ切替", translated.Backend) : string.Empty)
+            : T("ホットキー: 翻訳失敗 — {0}", translation.Message);
     }
 
     /// <summary>
@@ -3528,7 +3579,7 @@ private void StartHotkey()
     {
         if (_overlay is null)
         {
-            StatusText.Text = "ホットキー: まだ訳文を表示していません。";
+            StatusText.Text = T("ホットキー: まだ訳文を表示していません。");
             return Task.CompletedTask;
         }
 
@@ -3538,9 +3589,9 @@ private void StartHotkey()
 
         StatusText.Text = (wasVisible, isVisible) switch
         {
-            (true, _) => "ホットキー: 訳文を消しました。もう一度押すと出し直します。",
-            (false, true) => "ホットキー: 最後の訳文を出し直しました（API は呼んでいません）。",
-            (false, false) => "ホットキー: 出し直せる訳文がありません。",
+            (true, _) => T("ホットキー: 訳文を消しました。もう一度押すと出し直します。"),
+            (false, true) => T("ホットキー: 最後の訳文を出し直しました（API は呼んでいません）。"),
+            (false, false) => T("ホットキー: 出し直せる訳文がありません。"),
         };
 
         return Task.CompletedTask;
@@ -3550,7 +3601,7 @@ private void StartHotkey()
     {
         _overlay?.HideOverlay();
         OverlayHideButton.IsEnabled = false;
-        StatusText.Text = "オーバーレイを消しました。";
+        StatusText.Text = T("オーバーレイを消しました。");
     }
 
     // ===== 保存 =====
@@ -3562,7 +3613,7 @@ private void StartHotkey()
     {
         if (_lastBitmap is null || _lastFrame is null)
         {
-            StatusText.Text = "保存できる画像がありません。";
+            StatusText.Text = T("保存できる画像がありません。");
             return Task.CompletedTask;
         }
 
@@ -3577,7 +3628,7 @@ private void StartHotkey()
             encoder.Save(stream);
         }
 
-        StatusText.Text = $"保存しました: {path}";
+        StatusText.Text = T("保存しました: {0}", path);
         return Task.CompletedTask;
     }
 
@@ -3624,7 +3675,7 @@ private void StartHotkey()
         catch (Exception ex)
 #pragma warning restore CA1031
         {
-            StatusText.Text = $"失敗: {ex.Message}";
+            StatusText.Text = T("失敗: {0}", ex.Message);
             ResultText.Text = ex.ToString();
         }
     }

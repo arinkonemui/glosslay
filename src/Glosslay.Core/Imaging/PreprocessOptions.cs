@@ -1,3 +1,5 @@
+using static Glosslay.Localization.UiText;
+
 namespace Glosslay.Imaging;
 
 /// <summary>拡大時の補間方法。</summary>
@@ -94,41 +96,41 @@ public sealed record PreprocessOptions
     {
         if (!HasAnyEffect)
         {
-            return "前処理なし";
+            return T("前処理なし");
         }
 
         var parts = new List<string>();
         if (Scale is not 1.0)
         {
-            parts.Add($"拡大{Scale:0.##}倍({Resampling})");
+            parts.Add(T("拡大{0:0.##}倍({1})", Scale, Resampling));
         }
 
         if (AutoContrast)
         {
-            parts.Add("自動コントラスト");
+            parts.Add(T("自動コントラスト"));
         }
 
         if (Contrast is not 1.0)
         {
-            parts.Add($"コントラスト{Contrast:0.##}");
+            parts.Add(T("コントラスト{0:0.##}", Contrast));
         }
 
         if (RemoveBackground)
         {
-            parts.Add($"背景除去(窓{BackgroundWindow})");
+            parts.Add(T("背景除去(窓{0})", BackgroundWindow));
         }
         else if (Binarize)
         {
-            parts.Add("二値化");
+            parts.Add(T("二値化"));
         }
         else if (Grayscale)
         {
-            parts.Add("グレースケール");
+            parts.Add(T("グレースケール"));
         }
 
         if (Invert)
         {
-            parts.Add("反転");
+            parts.Add(T("反転"));
         }
 
         return string.Join(" / ", parts);

@@ -1,3 +1,5 @@
+using static Glosslay.Localization.UiText;
+
 namespace Glosslay.Input;
 
 /// <summary>
@@ -17,8 +19,9 @@ namespace Glosslay.Input;
 public sealed class RawInputTrigger : IInputTrigger
 {
     private readonly List<(InputAction Action, HotkeyDetector Detector)> _detectors = [];
-    private readonly List<string> _descriptions = [];
-    private readonly List<string> _problems = [];
+    // 文言は引くときに組み立てる（画面の言語を変えたら、その言語で出すため — FR-SYS-03）。
+    private readonly List<Func<string>> _descriptions = [];
+    private readonly List<Func<string>> _problems = [];
     private bool _attached;
     private bool _disposed;
 
@@ -42,16 +45,16 @@ public sealed class RawInputTrigger : IInputTrigger
     }
 
     /// <inheritdoc />
-    public string Name => "キーボード (Raw Input)";
+    public string Name => T("キーボード (Raw Input)");
 
     /// <inheritdoc />
     public bool IsActive => _detectors.Count > 0;
 
     /// <inheritdoc />
-    public IReadOnlyList<string> Descriptions => _descriptions;
+    public IReadOnlyList<string> Descriptions => [.. _descriptions.Select(d => d())];
 
     /// <inheritdoc />
-    public IReadOnlyList<string> Problems => _problems;
+    public IReadOnlyList<string> Problems => [.. _problems.Select(p => p())];
 
     /// <inheritdoc />
     public event Action<InputAction>? Fired;
@@ -104,19 +107,19 @@ public sealed class RawInputTrigger : IInputTrigger
     {
         if (!HotkeyGesture.TryParse(text, out var parsed))
         {
-            _problems.Add($"{HotkeyOptions.FileName} の{label}「{text}」を解釈できません。");
+            _problems.Add(() => T("{0} の{1}「{2}」を解釈できません。", HotkeyOptions.FileName, T(label), text));
             return;
         }
 
         var gesture = parsed.Value;
         if (_detectors.Exists(d => d.Detector.Gesture == gesture))
         {
-            _problems.Add($"{label}「{gesture}」は他の割り当てと重複しているため無効にしました。");
+            _problems.Add(() => T("{0}「{1}」は他の割り当てと重複しているため無効にしました。", T(label), gesture));
             return;
         }
 
         _detectors.Add((action, new HotkeyDetector(gesture)));
-        _descriptions.Add($"{gesture} — {description}");
+        _descriptions.Add(() => $"{gesture} — {T(description)}");
     }
 
     public void Dispose()

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Glosslay.Imaging;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
+using static Glosslay.Localization.UiText;
 
 namespace Glosslay.Ocr;
 
@@ -26,7 +27,7 @@ public sealed class PaddleOcrEngine(PaddleOcrOptions? options = null) : IOcrEngi
     private bool _disposed;
 
     /// <inheritdoc />
-    public string Name => $"PaddleOCR ({_options.RecognitionModelName})";
+    public string Name => $"PaddleOCR ({T(_options.RecognitionModelName)})";
 
     /// <inheritdoc />
     public bool IsReady => _detection is not null && _recognition is not null;
@@ -95,8 +96,8 @@ public sealed class PaddleOcrEngine(PaddleOcrOptions? options = null) : IOcrEngi
             if (!File.Exists(path))
             {
                 throw new FileNotFoundException(
-                    $"OCR モデルが見つかりません: {path}。"
-                    + $"モデル一式を {_options.ModelDirectory} に配置してください。",
+                    T("OCR モデルが見つかりません: {0}。", path)
+                    + T("モデル一式を {0} に配置してください。", _options.ModelDirectory),
                     path);
             }
         }

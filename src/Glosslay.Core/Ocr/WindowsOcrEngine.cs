@@ -4,6 +4,7 @@ using Windows.Globalization;
 using Windows.Graphics.Imaging;
 using Windows.Security.Cryptography;
 using WinOcr = Windows.Media.Ocr;
+using static Glosslay.Localization.UiText;
 
 namespace Glosslay.Ocr;
 
@@ -116,12 +117,12 @@ public sealed class WindowsOcrEngine : IOcrEngine
             // FR-OCR-10: 何が足りないかと、どこで足せるかをその場で伝える。
             var available = AvailableLanguages.Count > 0
                 ? string.Join(" / ", AvailableLanguages)
-                : "（ひとつも入っていません）";
+                : T("（ひとつも入っていません）");
 
             throw new NotSupportedException(
-                $"Windows OCR で {_language ?? "利用者の言語"} を認識できません。"
-                + $" 入っている言語: {available}。"
-                + $" 設定（{LanguageSettingsUri}）から言語を追加してください。");
+                T("Windows OCR で {0} を認識できません。", _language ?? T("利用者の言語"))
+                + T(" 入っている言語: {0}。", available)
+                + T(" 設定（{0}）から言語を追加してください。", LanguageSettingsUri));
         }
 
         return Task.CompletedTask;

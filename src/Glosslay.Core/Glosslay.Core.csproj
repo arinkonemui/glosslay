@@ -50,4 +50,13 @@
     </PackageReference>
   </ItemGroup>
 
+  <!--
+    画面の文言の訳（FR-SYS-03）。「日本語の文 → 訳」の JSON を言語ごとに持つ（UiText）。
+    実行ファイルに埋め込むのは、置き忘れで画面が日本語に戻る事故を避けるため。
+    名前は Glosslay.Localization.<言語>.json に固定する（UiText.TableFor が引く）。
+  -->
+  <ItemGroup>
+    <EmbeddedResource Include="Localization\*.json" LogicalName="Glosslay.Localization.%(Filename).json" />
+  </ItemGroup>
+
 </Project>

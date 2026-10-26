@@ -1,4 +1,5 @@
 using System.Globalization;
+using static Glosslay.Localization.UiText;
 
 namespace Glosslay.Monitoring;
 
@@ -60,34 +61,32 @@ public static class AutoWatchNotice
 
         var lines = new List<string>
         {
-            $"自動監視を入れると、{Seconds(options.Interval)} 秒ごとに画面を撮って見比べます。",
-            "変化があったときだけ翻訳するので、画面が止まっている間は何もしません。",
+            T("自動監視を入れると、{0} 秒ごとに画面を撮って見比べます。", Seconds(options.Interval)),
+            T("変化があったときだけ翻訳するので、画面が止まっている間は何もしません。"),
             string.Empty,
         };
 
         if (hasRegion)
         {
-            lines.Add($"翻訳 1 回にかかる時間は、指定した範囲で {Roughly(RegionTypical)}です。");
+            lines.Add(T("翻訳 1 回にかかる時間は、指定した範囲で {0}です。", Roughly(RegionTypical)));
         }
         else
         {
-            lines.Add($"翻訳 1 回にかかる時間は、画面全体で {Roughly(FullScreenTypical)}です。");
-            lines.Add("プレビューをドラッグして範囲を絞ると"
-                      + $" {Roughly(RegionTypical)}に短くなり、");
-            lines.Add("背景の動きによる誤検知も減ります。");
+            lines.Add(T("翻訳 1 回にかかる時間は、画面全体で {0}です。", Roughly(FullScreenTypical)));
+            lines.Add(T("プレビューをドラッグして範囲を絞ると {0}に短くなり、", Roughly(RegionTypical)));
+            lines.Add(T("背景の動きによる誤検知も減ります。"));
         }
 
-        lines.Add("（パソコンの性能や、画面の文字の量で前後します）");
+        lines.Add(T("（パソコンの性能や、画面の文字の量で前後します）"));
 
         // FR-MOD-08「処理時間の実測表示を案内する」。ここではぼかし、
         // 自分の環境での実際の時間は FR-OVL-10 の表示で見てもらう。
-        lines.Add("実際の時間は、設定の「処理時間を画面の隅に出す」で確かめられます。");
+        lines.Add(T("実際の時間は、設定の「処理時間を画面の隅に出す」で確かめられます。"));
         lines.Add(string.Empty);
-        lines.Add($"1 時間あたり {options.MaxCallsPerHour.ToString(CultureInfo.CurrentCulture)} 回で"
-                  + "自動的に止まります。");
-        lines.Add("クラウド翻訳を使う場合は、混雑すると 1 回に数十秒かかることがあります。");
+        lines.Add(T("1 時間あたり {0} 回で自動的に止まります。", options.MaxCallsPerHour.ToString(CultureInfo.CurrentCulture)));
+        lines.Add(T("クラウド翻訳を使う場合は、混雑すると 1 回に数十秒かかることがあります。"));
         lines.Add(string.Empty);
-        lines.Add("入れますか？");
+        lines.Add(T("入れますか？"));
 
         return string.Join(Environment.NewLine, lines);
     }
@@ -98,7 +97,7 @@ public static class AutoWatchNotice
     private static string Roughly(TimeSpan value)
     {
         var halves = Math.Max(1, Math.Round(value.TotalSeconds * 2, MidpointRounding.AwayFromZero));
-        return (halves / 2).ToString("0.#", CultureInfo.CurrentCulture) + " 秒程度";
+        return T("{0} 秒程度", (halves / 2).ToString("0.#", CultureInfo.CurrentCulture));
     }
 
     /// <summary>秒で表す。小数 1 桁。設定値（見回る間隔）に使う。</summary>

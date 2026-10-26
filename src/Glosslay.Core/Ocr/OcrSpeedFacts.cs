@@ -1,3 +1,5 @@
+using static Glosslay.Localization.UiText;
+
 namespace Glosslay.Ocr;
 
 /// <summary>
@@ -54,12 +56,12 @@ public static class OcrSpeedFacts
     /// 速さの数字より先に、使えるかどうかが分かるようにする。</para>
     /// </remarks>
     public static string FastModeTradeoff =>
-        "⚠️ 原文の言語が下の一覧に無ければ、Windows に言語を追加しないと使えません。"
-        + $"追加できれば全画面の読み取りは約 {PaddleFullScreenMs} ms → 約 {WindowsFullScreenMs} ms"
-        + $"（{SampleCount} 枚の実測・{MeasuredOn}）。"
-        + $"ただし正解との一致度が {PaddleSimilarity:0.#}% → {WindowsSimilarity:0.#}% に下がり、"
-        + $"原文に無い数値が {PaddleExtraNumbers} 件 → {WindowsExtraNumbers} 件に増えます。"
-        + "セリフを読むには十分ですが、カードや数値を読むには向きません。";
+        T("⚠️ 原文の言語が下の一覧に無ければ、Windows に言語を追加しないと使えません。")
+        + T("追加できれば全画面の読み取りは約 {0} ms → 約 {1} ms", PaddleFullScreenMs, WindowsFullScreenMs)
+        + T("（{0} 枚の実測・{1}）。", SampleCount, MeasuredOn)
+        + T("ただし正解との一致度が {0:0.#}% → {1:0.#}% に下がり、", PaddleSimilarity, WindowsSimilarity)
+        + T("原文に無い数値が {0} 件 → {1} 件に増えます。", PaddleExtraNumbers, WindowsExtraNumbers)
+        + T("セリフを読むには十分ですが、カードや数値を読むには向きません。");
 
     /// <summary>既定のエンジンを選んでいるときの説明。</summary>
     /// <remarks>
@@ -68,6 +70,6 @@ public static class OcrSpeedFacts
     /// 利用者には範囲を絞る方法を案内する。
     /// </remarks>
     public static string DefaultModeNote =>
-        "精度を優先します。ほとんどの場合はこのままで問題ありません。"
-        + "プレビューをドラッグして範囲を絞ると、読み取りは大きく速くなります。";
+        T("精度を優先します。ほとんどの場合はこのままで問題ありません。")
+        + T("プレビューをドラッグして範囲を絞ると、読み取りは大きく速くなります。");
 }

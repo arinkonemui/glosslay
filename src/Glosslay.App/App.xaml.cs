@@ -1,5 +1,7 @@
 using System.Windows;
+using Glosslay.Localization;
 using Glosslay.Shell;
+using Glosslay.Translation;
 
 namespace Glosslay;
 
@@ -36,9 +38,41 @@ public partial class App : Application
             return;
         }
 
+        ChooseLanguage(e.Args.Contains(AutoStart.TrayArgument, StringComparer.OrdinalIgnoreCase));
+
         var window = new MainWindow();
         MainWindow = window;
         window.Show();
+    }
+
+    /// <summary>
+    /// 画面の言語を決める（FR-SYS-03）。<b>まだ選んでいなければ、ここで選んでもらう</b>（FR-SYS-05）。
+    /// </summary>
+    /// <remarks>
+    /// <para>メイン言語が画面の言語を兼ねる。操作画面を作る前に決めておくと、最初から選んだ言語で出る。</para>
+    /// <para><b>自動起動（トレイで待機）のときは聞かない。</b>ログオン時に画面を出すと、ゲームの前に割り込む。
+    /// その回は既定（日本語）で動き、次に画面から起動したときに聞く。</para>
+    /// <para>選ぶ画面を閉じただけなら保存しない（<see cref="LanguageSetupWindow"/>）。</para>
+    /// </remarks>
+    private void ChooseLanguage(bool startInTray)
+    {
+        var options = TranslationOptions.Load();
+        if (options.MainLanguage is null && options.TargetLanguage is null && !startInTray)
+        {
+            // 選ぶ画面だけが開いている間に閉じられても、アプリごと終わらせない。
+            var mode = ShutdownMode;
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            var chooser = new LanguageSetupWindow();
+            if (chooser.ShowDialog() == true && chooser.Selected is { } selected)
+            {
+                options = options with { MainLanguage = selected };
+                options.Save();
+            }
+
+            ShutdownMode = mode;
+        }
+
+        UiText.SetLanguage(options.Main);
     }
 
     /// <summary>

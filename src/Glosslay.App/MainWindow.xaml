@@ -48,6 +48,16 @@
             <Setter Property="FontSize" Value="11" />
             <Setter Property="Margin" Value="0,8,0,2" />
         </Style>
+        <!-- 選択肢の文は折り返す。英語などは日本語より長く、左の幅（360）からはみ出して切れるため（FR-SYS-03）。 -->
+        <DataTemplate x:Key="WrappedText">
+            <TextBlock Text="{Binding}" TextWrapping="Wrap" />
+        </DataTemplate>
+        <Style TargetType="CheckBox">
+            <Setter Property="ContentTemplate" Value="{StaticResource WrappedText}" />
+        </Style>
+        <Style TargetType="RadioButton">
+            <Setter Property="ContentTemplate" Value="{StaticResource WrappedText}" />
+        </Style>
     </Window.Resources>
 
     <Grid Margin="12">
@@ -63,87 +73,87 @@
         <TabControl Grid.Row="0" Grid.Column="0" Margin="0,0,12,0">
 
             <!-- ===== メイン: ふだん見るもの ===== -->
-            <TabItem Header="メイン">
+            <TabItem Header="{local:T 'メイン'}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto"
                               HorizontalScrollBarVisibility="Disabled">
                     <StackPanel Margin="8">
 
-                        <GroupBox Header="対象">
+                        <GroupBox Header="{local:T '対象'}">
                             <StackPanel>
                                 <!-- 高さを固定する。スクロール内で * を使うと高さが決まらない。 -->
                                 <ListBox x:Name="TargetList" Height="150" DisplayMemberPath="DisplayName"
                                          SelectionChanged="OnTargetSelectionChanged" />
-                                <Button Content="一覧を更新" Click="OnRefreshClick" Margin="0,6,0,0" />
+                                <Button Content="{local:T '一覧を更新'}" Click="OnRefreshClick" Margin="0,6,0,0" />
                             </StackPanel>
                         </GroupBox>
 
-                        <GroupBox Header="プロファイル">
+                        <GroupBox Header="{local:T 'プロファイル'}">
                             <StackPanel>
                                 <ComboBox x:Name="ProfileCombo" DisplayMemberPath="Name" />
                                 <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                                    <Button Content="適用" Click="OnApplyProfileClick" FontWeight="SemiBold" />
-                                    <Button Content="現在の設定を保存" Click="OnSaveProfileClick" />
+                                    <Button Content="{local:T '適用'}" Click="OnApplyProfileClick" FontWeight="SemiBold" />
+                                    <Button Content="{local:T '現在の設定を保存'}" Click="OnSaveProfileClick" />
                                 </StackPanel>
 
                                 <CheckBox x:Name="ProfileAutoApplyCheck" Margin="0,8,0,0"
-                                          Content="前面のゲームに合わせて自動で切り替える"
+                                          Content="{local:T '前面のゲームに合わせて自動で切り替える'}"
                                           Checked="OnProfileAutoApplyChanged"
                                           Unchecked="OnProfileAutoApplyChanged" />
                                 <TextBlock Style="{StaticResource Hint}"
-                                           Text="当てはまるプロファイルが無いときは、今の設定をそのまま使います（勝手に解除しません）。" />
+                                           Text="{local:T '当てはまるプロファイルが無いときは、今の設定をそのまま使います（勝手に解除しません）。'}" />
 
-                                <Expander Header="名前と対象の指定" Margin="0,8,0,0">
+                                <Expander Header="{local:T '名前と対象の指定'}" Margin="0,8,0,0">
                                     <StackPanel Margin="0,6,0,0">
                                         <TextBlock Style="{StaticResource FieldLabel}"
-                                                   Text="名前（空なら対象のタイトル）" Margin="0,0,0,2" />
+                                                   Text="{local:T '名前（空なら対象のタイトル）'}" Margin="0,0,0,2" />
                                         <TextBox x:Name="ProfileNameBox" Padding="4,3" />
 
                                         <TextBlock Style="{StaticResource FieldLabel}"
-                                                   Text="タイトルに含まれる文字列（任意）" />
+                                                   Text="{local:T 'タイトルに含まれる文字列（任意）'}" />
                                         <TextBox x:Name="ProfileTitleBox" Padding="4,3" />
                                         <TextBlock x:Name="ProfileTargetText" Style="{StaticResource Hint}"
-                                                   Text="対象: —" />
+                                                   Text="{local:T '対象: —'}" />
                                         <TextBlock Style="{StaticResource Hint}"
-                                                   Text="自動適用はウィンドウのクラス名で見分けます。Unity 製のゲームはどれも同じクラス名のため、クラス名だけでは別のゲームにも当たります。その場合はタイトルの変わらない部分を入れてください（「ゲーム名 - ステージ3」なら「ゲーム名」だけ）。" />
+                                                   Text="{local:T '自動適用はウィンドウのクラス名で見分けます。Unity 製のゲームはどれも同じクラス名のため、クラス名だけでは別のゲームにも当たります。その場合はタイトルの変わらない部分を入れてください（「ゲーム名 - ステージ3」なら「ゲーム名」だけ）。'}" />
 
                                         <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                                            <Button Content="削除" Click="OnDeleteProfileClick" />
-                                            <Button Content="読み直す" Click="OnReloadProfilesClick" />
-                                            <Button Content="JSON を開く" Click="OnOpenProfilesClick" />
+                                            <Button Content="{local:T '削除'}" Click="OnDeleteProfileClick" />
+                                            <Button Content="{local:T '読み直す'}" Click="OnReloadProfilesClick" />
+                                            <Button Content="{local:T 'JSON を開く'}" Click="OnOpenProfilesClick" />
                                         </StackPanel>
                                         <TextBlock Style="{StaticResource Hint}"
-                                                   Text="人が読める JSON です。1 件分をコピーして渡せば、他の人もそのゲームの設定をそのまま使えます。" />
+                                                   Text="{local:T '人が読める JSON です。1 件分をコピーして渡せば、他の人もそのゲームの設定をそのまま使えます。'}" />
                                     </StackPanel>
                                 </Expander>
                             </StackPanel>
                         </GroupBox>
 
-                        <GroupBox Header="いまの状態">
+                        <GroupBox Header="{local:T 'いまの状態'}">
                             <StackPanel>
                                 <TextBlock x:Name="TranslatorStateText" Style="{StaticResource Hint}"
-                                           Margin="0,0,0,0" Text="確認中…" />
+                                           Margin="0,0,0,0" Text="{local:T '確認中…'}" />
                                 <TextBlock x:Name="OcrEngineStateText" Style="{StaticResource Hint}"
-                                           Text="確認中…" />
+                                           Text="{local:T '確認中…'}" />
 
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="ホットキー" />
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="{local:T 'ホットキー'}" />
                                 <TextBlock x:Name="HotkeyText" TextWrapping="Wrap" FontWeight="SemiBold"
-                                           Text="準備中…" />
+                                           Text="{local:T '準備中…'}" />
                                 <TextBlock Style="{StaticResource Hint}"
-                                           Text="ゲーム中に押すと、その瞬間の画面を撮って翻訳します。「翻訳中…」が出たら撮影済みなので、カーソルを動かして構いません。訳文は押した瞬間の画面のものなので、画面が変わったら ON/OFF キーで消してください。キーはゲームにもそのまま届きます。" />
+                                           Text="{local:T 'ゲーム中に押すと、その瞬間の画面を撮って翻訳します。「翻訳中…」が出たら撮影済みなので、カーソルを動かして構いません。訳文は押した瞬間の画面のものなので、画面が変わったら ON/OFF キーで消してください。キーはゲームにもそのまま届きます。'}" />
                             </StackPanel>
                         </GroupBox>
 
-                        <GroupBox Header="使用量">
+                        <GroupBox Header="{local:T '使用量'}">
                             <StackPanel>
                                 <TextBlock x:Name="UsageText" TextWrapping="Wrap" FontSize="12" Text="—" />
                                 <CheckBox x:Name="UsageOverlayCheck" Margin="0,8,0,0"
-                                          Content="ゲーム画面の隅にも出しっぱなしにする"
+                                          Content="{local:T 'ゲーム画面の隅にも出しっぱなしにする'}"
                                           Checked="OnUsageOverlayChanged" Unchecked="OnUsageOverlayChanged" />
                                 <TextBlock Style="{StaticResource Hint}"
-                                           Text="既定は OFF。訳文を出したときは、その隅にも小さく添えています。クリックは下のゲームへ通ります。" />
-                                <Button Content="記録（usage.json）を開く" Click="OnOpenUsageClick" Margin="0,8,0,0" />
+                                           Text="{local:T '既定は OFF。訳文を出したときは、その隅にも小さく添えています。クリックは下のゲームへ通ります。'}" />
+                                <Button Content="{local:T '記録（usage.json）を開く'}" Click="OnOpenUsageClick" Margin="0,8,0,0" />
                                 <TextBlock Style="{StaticResource Hint}"
-                                           Text="日ごとの記録です。外部へ送信することはありません。" />
+                                           Text="{local:T '日ごとの記録です。外部へ送信することはありません。'}" />
                             </StackPanel>
                         </GroupBox>
 
@@ -152,87 +162,87 @@
             </TabItem>
 
             <!-- ===== 設定: 最初に 1 回だけ触るもの ===== -->
-            <TabItem Header="設定">
+            <TabItem Header="{local:T '設定'}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto"
                               HorizontalScrollBarVisibility="Disabled">
                     <StackPanel Margin="8">
 
-                        <GroupBox Header="翻訳">
+                        <GroupBox Header="{local:T '翻訳'}">
                             <StackPanel>
                                 <!-- メイン言語（FR-SYS-03）はアプリ全体で 1 つ。原文の言語（FR-OCR-02）はゲームごと（プロファイル）。 -->
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="メイン言語（訳文の言語）"
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="{local:T 'メイン言語（画面と訳文の言語）'}"
                                            Margin="0,0,0,2" />
                                 <ComboBox x:Name="MainLanguageCombo" DisplayMemberPath="DisplayName"
-                                          AutomationProperties.Name="メイン言語"
+                                          AutomationProperties.Name="{local:T 'メイン言語'}"
                                           SelectionChanged="OnMainLanguageChanged" />
                                 <TextBlock Style="{StaticResource Hint}"
-                                           Text="訳文はこの言語で出します。アプリ全体の設定です（ゲームごとには変わりません）。" />
+                                           Text="{local:T '画面と訳文をこの言語で出します。アプリ全体の設定です（ゲームごとには変わりません）。'}" />
 
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="原文の言語（ゲームの言語）" />
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="{local:T '原文の言語（ゲームの言語）'}" />
                                 <ComboBox x:Name="SourceLanguageCombo" DisplayMemberPath="DisplayName"
-                                          AutomationProperties.Name="原文の言語"
+                                          AutomationProperties.Name="{local:T '原文の言語'}"
                                           SelectionChanged="OnSourceLanguageChanged" />
                                 <TextBlock x:Name="PairNote" Style="{StaticResource Hint}" Text="" />
 
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="使うバックエンド" />
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="{local:T '使うバックエンド'}" />
                                 <RadioButton x:Name="BackendAutoRadio" GroupName="Backend"
                                              Checked="OnBackendChanged"
-                                             Content="自動（クラウド優先・失敗したらローカルへ切替）" />
+                                             Content="{local:T '自動（クラウド優先・失敗したらローカルへ切替）'}" />
                                 <RadioButton x:Name="BackendCloudRadio" GroupName="Backend"
                                              Checked="OnBackendChanged" Margin="0,2,0,0"
-                                             Content="クラウドのみ（失敗しても切り替えない）" />
+                                             Content="{local:T 'クラウドのみ（失敗しても切り替えない）'}" />
                                 <RadioButton x:Name="BackendLocalRadio" GroupName="Backend"
                                              Checked="OnBackendChanged" Margin="0,2,0,0"
-                                             Content="ローカルのみ（キーがあっても使わない）" />
+                                             Content="{local:T 'ローカルのみ（キーがあっても使わない）'}" />
                                 <TextBlock Style="{StaticResource Hint}"
-                                           Text="「クラウドのみ」は、質の落ちた訳が黙って出るより「今は訳せない」と分かる方がよい場合に選びます。" />
+                                           Text="{local:T '「クラウドのみ」は、質の落ちた訳が黙って出るより「今は訳せない」と分かる方がよい場合に選びます。'}" />
                                 <TextBlock x:Name="BackendNote" Style="{StaticResource Warning}" Text=""
                                            Visibility="Collapsed" />
 
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="APIキー" />
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="{local:T 'APIキー'}" />
                                 <!-- PasswordBox にしているのは、画面に出さないため。
                                      スクリーンショットを撮って人に送ってもキーが写らない。 -->
                                 <PasswordBox x:Name="ApiKeyBox" Padding="4,3" FontFamily="Consolas" />
                                 <TextBlock Style="{StaticResource Hint}"
-                                           Text="DPAPI で暗号化して %APPDATA%\Glosslay\secrets\ に保存します。設定JSONには書きません。" />
+                                           Text="{local:T 'DPAPI で暗号化して %APPDATA%\\Glosslay\\secrets\\ に保存します。設定JSONには書きません。'}" />
                                 <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                                    <Button x:Name="SaveApiKeyButton" Content="キーを保存"
+                                    <Button x:Name="SaveApiKeyButton" Content="{local:T 'キーを保存'}"
                                             Click="OnSaveApiKeyClick" />
-                                    <Button x:Name="DeleteApiKeyButton" Content="削除"
+                                    <Button x:Name="DeleteApiKeyButton" Content="{local:T '削除'}"
                                             Click="OnDeleteApiKeyClick" />
-                                    <Button Content="モデル設定を開く" Click="OnOpenGeminiSettingsClick" />
+                                    <Button Content="{local:T 'モデル設定を開く'}" Click="OnOpenGeminiSettingsClick" />
                                 </StackPanel>
                             </StackPanel>
                         </GroupBox>
 
-                        <GroupBox Header="読み取り">
+                        <GroupBox Header="{local:T '読み取り'}">
                             <StackPanel>
                                 <RadioButton x:Name="OcrPaddleRadio" GroupName="OcrEngine"
-                                             Content="既定（PaddleOCR）— おすすめ"
+                                             Content="{local:T '既定（PaddleOCR）— おすすめ'}"
                                              Checked="OnOcrEngineChanged" />
                                 <RadioButton x:Name="OcrWindowsRadio" GroupName="OcrEngine" Margin="0,2,0,0"
-                                             Content="高速モード（Windows OCR）— 上級者向け・要 言語パック"
+                                             Content="{local:T '高速モード（Windows OCR）— 上級者向け・要 言語パック'}"
                                              Checked="OnOcrEngineChanged" />
                                 <TextBlock x:Name="OcrEngineNote" Style="{StaticResource Hint}" Text="" />
 
                                 <!-- 高速モードで読む言語は、翻訳の欄の「原文の言語」に合わせる（2026-10-25）。 -->
                                 <TextBlock x:Name="OcrLanguageNote" Style="{StaticResource Hint}" Text="" />
-                                <Button Content="言語を追加する設定を開く" Click="OnOpenLanguageSettingsClick"
+                                <Button Content="{local:T '言語を追加する設定を開く'}" Click="OnOpenLanguageSettingsClick"
                                         Margin="0,6,0,0" />
 
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="前処理" />
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="{local:T '前処理'}" />
                                 <StackPanel Orientation="Horizontal" Margin="0,2">
-                                    <TextBlock Text="拡大" VerticalAlignment="Center" Width="70" />
+                                    <TextBlock Text="{local:T '拡大'}" VerticalAlignment="Center" Width="70" />
                                     <ComboBox x:Name="ScaleCombo" Width="70" SelectedIndex="0">
-                                        <ComboBoxItem Content="1.0 倍" Tag="1.0" />
-                                        <ComboBoxItem Content="1.5 倍" Tag="1.5" />
-                                        <ComboBoxItem Content="2.0 倍" Tag="2.0" />
-                                        <ComboBoxItem Content="3.0 倍" Tag="3.0" />
-                                        <ComboBoxItem Content="4.0 倍" Tag="4.0" />
+                                        <ComboBoxItem Content="{local:T '1.0 倍'}" Tag="1.0" />
+                                        <ComboBoxItem Content="{local:T '1.5 倍'}" Tag="1.5" />
+                                        <ComboBoxItem Content="{local:T '2.0 倍'}" Tag="2.0" />
+                                        <ComboBoxItem Content="{local:T '3.0 倍'}" Tag="3.0" />
+                                        <ComboBoxItem Content="{local:T '4.0 倍'}" Tag="4.0" />
                                     </ComboBox>
                                 </StackPanel>
                                 <StackPanel Orientation="Horizontal" Margin="0,2">
-                                    <TextBlock Text="コントラスト" VerticalAlignment="Center" Width="70" />
+                                    <TextBlock Text="{local:T 'コントラスト'}" VerticalAlignment="Center" Width="70" />
                                     <ComboBox x:Name="ContrastCombo" Width="70" SelectedIndex="0">
                                         <ComboBoxItem Content="1.0" Tag="1.0" />
                                         <ComboBoxItem Content="1.3" Tag="1.3" />
@@ -240,161 +250,161 @@
                                         <ComboBoxItem Content="2.0" Tag="2.0" />
                                     </ComboBox>
                                 </StackPanel>
-                                <CheckBox x:Name="AutoContrastCheck" Content="自動コントラスト" Margin="0,4,0,2" />
-                                <CheckBox x:Name="RemoveBackgroundCheck" Content="背景除去（イラスト背景対策）"
+                                <CheckBox x:Name="AutoContrastCheck" Content="{local:T '自動コントラスト'}" Margin="0,4,0,2" />
+                                <CheckBox x:Name="RemoveBackgroundCheck" Content="{local:T '背景除去（イラスト背景対策）'}"
                                           Margin="0,2" />
-                                <CheckBox x:Name="BinarizeCheck" Content="二値化" Margin="0,2" />
-                                <CheckBox x:Name="InvertCheck" Content="明暗を反転" Margin="0,2" />
+                                <CheckBox x:Name="BinarizeCheck" Content="{local:T '二値化'}" Margin="0,2" />
+                                <CheckBox x:Name="InvertCheck" Content="{local:T '明暗を反転'}" Margin="0,2" />
                                 <TextBlock Style="{StaticResource Hint}"
-                                           Text="プレビュー上をドラッグすると、その範囲だけを読み取ります。範囲を絞ると速くなります。" />
-                                <Button Content="範囲の指定を解除" Click="OnClearRegionClick" Margin="0,6,0,0" />
+                                           Text="{local:T 'プレビュー上をドラッグすると、その範囲だけを読み取ります。範囲を絞ると速くなります。'}" />
+                                <Button Content="{local:T '範囲の指定を解除'}" Click="OnClearRegionClick" Margin="0,6,0,0" />
                             </StackPanel>
                         </GroupBox>
 
-                        <GroupBox Header="自動で翻訳する">
+                        <GroupBox Header="{local:T '自動で翻訳する'}">
                             <StackPanel>
-                                <CheckBox x:Name="AutoWatchCheck" Content="画面の変化を見て自動で翻訳する"
+                                <CheckBox x:Name="AutoWatchCheck" Content="{local:T '画面の変化を見て自動で翻訳する'}"
                                           Checked="OnAutoWatchChanged" Unchecked="OnAutoWatchChanged" />
                                 <TextBlock Style="{StaticResource Hint}"
-                                           Text="セリフ送りに追従するモードです。既定は OFF。プレビューをドラッグして範囲を絞ると、背景の動きによる誤検知が減ります。変化がなければ読み取りも翻訳もしません。1 時間あたりの呼び出し回数に上限があります。" />
+                                           Text="{local:T 'セリフ送りに追従するモードです。既定は OFF。プレビューをドラッグして範囲を絞ると、背景の動きによる誤検知が減ります。変化がなければ読み取りも翻訳もしません。1 時間あたりの呼び出し回数に上限があります。'}" />
 
                                 <CheckBox x:Name="CursorDwellCheck" Margin="0,10,0,0"
-                                          Content="カーソルを止めたら自動で翻訳する"
+                                          Content="{local:T 'カーソルを止めたら自動で翻訳する'}"
                                           Checked="OnCursorDwellChanged" Unchecked="OnCursorDwellChanged" />
                                 <TextBlock Style="{StaticResource Hint}"
-                                           Text="カードに合わせて説明を読む操作に向きます。止まってから少し待つと 1 回だけ発動し、動かし続けている間は何もしません。OFF にしてもホットキーでの翻訳は使えます。呼び出し上限は上と共有します。" />
+                                           Text="{local:T 'カードに合わせて説明を読む操作に向きます。止まってから少し待つと 1 回だけ発動し、動かし続けている間は何もしません。OFF にしてもホットキーでの翻訳は使えます。呼び出し上限は上と共有します。'}" />
 
-                                <Expander Header="細かい調整" Margin="0,10,0,0">
+                                <Expander Header="{local:T '細かい調整'}" Margin="0,10,0,0">
                                     <StackPanel Margin="0,6,0,0">
                                         <StackPanel Orientation="Horizontal" Margin="0,2">
-                                            <TextBlock Text="見回る間隔" VerticalAlignment="Center" Width="110" />
+                                            <TextBlock Text="{local:T '見回る間隔'}" VerticalAlignment="Center" Width="110" />
                                             <ComboBox x:Name="WatchIntervalCombo" Width="90"
                                                       SelectionChanged="OnWatchTuningChanged">
-                                                <ComboBoxItem Content="0.3 秒" Tag="300" />
-                                                <ComboBoxItem Content="0.5 秒" Tag="500" />
-                                                <ComboBoxItem Content="1.0 秒" Tag="1000" />
-                                                <ComboBoxItem Content="2.0 秒" Tag="2000" />
+                                                <ComboBoxItem Content="{local:T '0.3 秒'}" Tag="300" />
+                                                <ComboBoxItem Content="{local:T '0.5 秒'}" Tag="500" />
+                                                <ComboBoxItem Content="{local:T '1.0 秒'}" Tag="1000" />
+                                                <ComboBoxItem Content="{local:T '2.0 秒'}" Tag="2000" />
                                             </ComboBox>
                                         </StackPanel>
                                         <StackPanel Orientation="Horizontal" Margin="0,2">
-                                            <TextBlock Text="変化の感度" VerticalAlignment="Center" Width="110" />
+                                            <TextBlock Text="{local:T '変化の感度'}" VerticalAlignment="Center" Width="110" />
                                             <ComboBox x:Name="WatchThresholdCombo" Width="90"
                                                       SelectionChanged="OnWatchTuningChanged">
-                                                <ComboBoxItem Content="敏感" Tag="0.01" />
-                                                <ComboBoxItem Content="ふつう" Tag="0.02" />
-                                                <ComboBoxItem Content="鈍感" Tag="0.05" />
+                                                <ComboBoxItem Content="{local:T '敏感'}" Tag="0.01" />
+                                                <ComboBoxItem Content="{local:T 'ふつう'}" Tag="0.02" />
+                                                <ComboBoxItem Content="{local:T '鈍感'}" Tag="0.05" />
                                             </ComboBox>
                                         </StackPanel>
                                         <TextBlock Style="{StaticResource Hint}"
-                                                   Text="間隔を短くすると追従は良くなりますが、CPU をゲームと奪い合います。鈍感にすると背景の動きで誤って翻訳することが減ります。" />
+                                                   Text="{local:T '間隔を短くすると追従は良くなりますが、CPU をゲームと奪い合います。鈍感にすると背景の動きで誤って翻訳することが減ります。'}" />
 
                                         <StackPanel Orientation="Horizontal" Margin="0,8,0,2">
-                                            <TextBlock Text="静止と見なす時間" VerticalAlignment="Center" Width="110" />
+                                            <TextBlock Text="{local:T '静止と見なす時間'}" VerticalAlignment="Center" Width="110" />
                                             <ComboBox x:Name="DwellTimeCombo" Width="90"
                                                       SelectionChanged="OnCursorTuningChanged">
-                                                <ComboBoxItem Content="0.2 秒" Tag="200" />
-                                                <ComboBoxItem Content="0.4 秒" Tag="400" />
-                                                <ComboBoxItem Content="0.7 秒" Tag="700" />
-                                                <ComboBoxItem Content="1.0 秒" Tag="1000" />
+                                                <ComboBoxItem Content="{local:T '0.2 秒'}" Tag="200" />
+                                                <ComboBoxItem Content="{local:T '0.4 秒'}" Tag="400" />
+                                                <ComboBoxItem Content="{local:T '0.7 秒'}" Tag="700" />
+                                                <ComboBoxItem Content="{local:T '1.0 秒'}" Tag="1000" />
                                             </ComboBox>
                                         </StackPanel>
                                         <StackPanel Orientation="Horizontal" Margin="0,2">
-                                            <TextBlock Text="読み取る範囲" VerticalAlignment="Center" Width="110" />
+                                            <TextBlock Text="{local:T '読み取る範囲'}" VerticalAlignment="Center" Width="110" />
                                             <ComboBox x:Name="CursorRegionCombo" Width="130"
                                                       SelectionChanged="OnCursorTuningChanged">
-                                                <ComboBoxItem Content="狭い (480x360)" Tag="480x360" />
-                                                <ComboBoxItem Content="ふつう (640x480)" Tag="640x480" />
-                                                <ComboBoxItem Content="広い (900x600)" Tag="900x600" />
+                                                <ComboBoxItem Content="{local:T '狭い (480x360)'}" Tag="480x360" />
+                                                <ComboBoxItem Content="{local:T 'ふつう (640x480)'}" Tag="640x480" />
+                                                <ComboBoxItem Content="{local:T '広い (900x600)'}" Tag="900x600" />
                                             </ComboBox>
                                         </StackPanel>
                                         <TextBlock Style="{StaticResource Hint}"
-                                                   Text="範囲を広げるほど読み取りに時間がかかります。カーソルの周りの説明文が収まる大きさが目安です。" />
+                                                   Text="{local:T '範囲を広げるほど読み取りに時間がかかります。カーソルの周りの説明文が収まる大きさが目安です。'}" />
                                     </StackPanel>
                                 </Expander>
                             </StackPanel>
                         </GroupBox>
 
-                        <GroupBox Header="訳文の見た目">
+                        <GroupBox Header="{local:T '訳文の見た目'}">
                             <StackPanel>
                                 <StackPanel Orientation="Horizontal" Margin="0,2">
-                                    <TextBlock Text="文字の大きさ" VerticalAlignment="Center" Width="110" />
+                                    <TextBlock Text="{local:T '文字の大きさ'}" VerticalAlignment="Center" Width="110" />
                                     <ComboBox x:Name="TextSizeCombo" Width="90"
                                               SelectionChanged="OnOverlayLookChanged">
-                                        <ComboBoxItem Content="小" Tag="Small" />
-                                        <ComboBoxItem Content="中" Tag="Medium" />
-                                        <ComboBoxItem Content="大" Tag="Large" />
+                                        <ComboBoxItem Content="{local:T '小'}" Tag="Small" />
+                                        <ComboBoxItem Content="{local:T '中'}" Tag="Medium" />
+                                        <ComboBoxItem Content="{local:T '大'}" Tag="Large" />
                                     </ComboBox>
                                 </StackPanel>
                                 <StackPanel Orientation="Horizontal" Margin="0,2">
-                                    <TextBlock Text="消えるまで" VerticalAlignment="Center" Width="110" />
+                                    <TextBlock Text="{local:T '消えるまで'}" VerticalAlignment="Center" Width="110" />
                                     <ComboBox x:Name="AutoHideCombo" Width="90"
                                               SelectionChanged="OnOverlayLookChanged">
-                                        <ComboBoxItem Content="5 秒" Tag="5" />
-                                        <ComboBoxItem Content="10 秒" Tag="10" />
-                                        <ComboBoxItem Content="20 秒" Tag="20" />
-                                        <ComboBoxItem Content="30 秒" Tag="30" />
+                                        <ComboBoxItem Content="{local:T '5 秒'}" Tag="5" />
+                                        <ComboBoxItem Content="{local:T '10 秒'}" Tag="10" />
+                                        <ComboBoxItem Content="{local:T '20 秒'}" Tag="20" />
+                                        <ComboBoxItem Content="{local:T '30 秒'}" Tag="30" />
                                     </ComboBox>
                                 </StackPanel>
                                 <TextBlock Style="{StaticResource Hint}"
-                                           Text="訳文は押した瞬間の画面のものです。画面が変わると合わなくなるため、出しっぱなしにはしません。" />
+                                           Text="{local:T '訳文は押した瞬間の画面のものです。画面が変わると合わなくなるため、出しっぱなしにはしません。'}" />
 
                                 <!-- FR-OVL-10。使用量と同じ隅に並べる（2026-10-14・人間の判断）。 -->
                                 <CheckBox x:Name="ProcessingTimeCheck" Margin="0,10,0,2"
-                                          Content="処理時間を画面の隅に出す"
+                                          Content="{local:T '処理時間を画面の隅に出す'}"
                                           Checked="OnProcessingTimeOverlayChanged"
                                           Unchecked="OnProcessingTimeOverlayChanged" />
                                 <TextBlock Style="{StaticResource Hint}"
-                                           Text="直近 10 回の読み取りと翻訳にかかった時間です。自動監視を入れるかどうかの目安になります。録画や配信に映したくない場合は切ってください。" />
+                                           Text="{local:T '直近 10 回の読み取りと翻訳にかかった時間です。自動監視を入れるかどうかの目安になります。録画や配信に映したくない場合は切ってください。'}" />
 
                                 <StackPanel Orientation="Horizontal" Margin="0,8,0,2">
-                                    <TextBlock Text="常駐表示の隅" VerticalAlignment="Center" Width="110" />
+                                    <TextBlock Text="{local:T '常駐表示の隅'}" VerticalAlignment="Center" Width="110" />
                                     <ComboBox x:Name="UsageCornerCombo" Width="90"
                                               SelectionChanged="OnUsageCornerChanged">
-                                        <ComboBoxItem Content="左上" Tag="TopLeft" />
-                                        <ComboBoxItem Content="右上" Tag="TopRight" />
-                                        <ComboBoxItem Content="左下" Tag="BottomLeft" />
-                                        <ComboBoxItem Content="右下" Tag="BottomRight" />
+                                        <ComboBoxItem Content="{local:T '左上'}" Tag="TopLeft" />
+                                        <ComboBoxItem Content="{local:T '右上'}" Tag="TopRight" />
+                                        <ComboBoxItem Content="{local:T '左下'}" Tag="BottomLeft" />
+                                        <ComboBoxItem Content="{local:T '右下'}" Tag="BottomRight" />
                                     </ComboBox>
                                 </StackPanel>
                                 <TextBlock Style="{StaticResource Hint}"
-                                           Text="使用量（「メイン」で入れた場合）と処理時間を、この隅に並べて出します。ゲームの表示と重なる場合は変えてください。" />
+                                           Text="{local:T '使用量（「メイン」で入れた場合）と処理時間を、この隅に並べて出します。ゲームの表示と重なる場合は変えてください。'}" />
                             </StackPanel>
                         </GroupBox>
 
-                        <GroupBox Header="キャプチャ">
+                        <GroupBox Header="{local:T 'キャプチャ'}">
                             <StackPanel>
-                                <RadioButton x:Name="WindowModeRadio" Content="ウィンドウ指定" IsChecked="True"
+                                <RadioButton x:Name="WindowModeRadio" Content="{local:T 'ウィンドウ指定'}" IsChecked="True"
                                              Margin="0,2" Checked="OnModeChanged" />
-                                <RadioButton x:Name="MonitorModeRadio" Content="モニタ全体" Margin="0,2"
+                                <RadioButton x:Name="MonitorModeRadio" Content="{local:T 'モニタ全体'}" Margin="0,2"
                                              Checked="OnModeChanged" />
                                 <CheckBox x:Name="RemoveBorderCheck" IsChecked="True" Margin="0,6,0,2"
-                                          Content="キャプチャ枠を消す" Checked="OnOptionChanged"
+                                          Content="{local:T 'キャプチャ枠を消す'}" Checked="OnOptionChanged"
                                           Unchecked="OnOptionChanged" />
                                 <CheckBox x:Name="CaptureCursorCheck" IsChecked="False" Margin="0,2"
-                                          Content="カーソルを含める" Checked="OnOptionChanged"
+                                          Content="{local:T 'カーソルを含める'}" Checked="OnOptionChanged"
                                           Unchecked="OnOptionChanged" />
                                 <TextBlock Style="{StaticResource Hint}"
-                                           Text="片方が塞がれた場合の保険として両方を用意しています。" />
+                                           Text="{local:T '片方が塞がれた場合の保険として両方を用意しています。'}" />
                             </StackPanel>
                         </GroupBox>
 
                         <!-- FR-SYS-02。× の動きは利用者が選ぶ（2026-10-14 の要望）。 -->
-                        <GroupBox Header="アプリの動作">
+                        <GroupBox Header="{local:T 'アプリの動作'}">
                             <StackPanel>
-                                <TextBlock Style="{StaticResource FieldLabel}" Text="× を押したとき"
+                                <TextBlock Style="{StaticResource FieldLabel}" Text="{local:T '× を押したとき'}"
                                            Margin="0,0,0,2" />
                                 <ComboBox x:Name="CloseBehaviorCombo" Width="220" HorizontalAlignment="Left"
                                           SelectionChanged="OnCloseBehaviorChanged">
-                                    <ComboBoxItem Content="タスクトレイにしまう" Tag="HideToTray" />
-                                    <ComboBoxItem Content="アプリを終了する" Tag="Exit" />
+                                    <ComboBoxItem Content="{local:T 'タスクトレイにしまう'}" Tag="HideToTray" />
+                                    <ComboBoxItem Content="{local:T 'アプリを終了する'}" Tag="Exit" />
                                 </ComboBox>
                                 <TextBlock Style="{StaticResource Hint}"
-                                           Text="しまっておくと、この画面を閉じてもホットキーと自動監視が使えます。終了するには、タスクトレイのアイコンを右クリックしてください。" />
+                                           Text="{local:T 'しまっておくと、この画面を閉じてもホットキーと自動監視が使えます。終了するには、タスクトレイのアイコンを右クリックしてください。'}" />
                                 <CheckBox x:Name="AutoStartCheck" Margin="0,8,0,2"
-                                          Content="Windows の起動時に自動で起動する"
+                                          Content="{local:T 'Windows の起動時に自動で起動する'}"
                                           Checked="OnAutoStartChanged" Unchecked="OnAutoStartChanged" />
                                 <TextBlock Style="{StaticResource Hint}"
-                                           Text="起動したときは画面を出さず、タスクトレイで待機します。" />
+                                           Text="{local:T '起動したときは画面を出さず、タスクトレイで待機します。'}" />
                                 <TextBlock x:Name="AutoStartNote" Style="{StaticResource Hint}" Visibility="Collapsed" />
                             </StackPanel>
                         </GroupBox>
@@ -402,14 +412,14 @@
                         <!-- 課題1・課題6。書く場所を 1 か所にまとめる（2026-09-21 の要望）。
                              ここに置いたのは、設定を触っている人が必ず通る場所だから。
                              配布ページと操作マニュアル（FR-SYS-11）にも同じ内容を載せる。 -->
-                        <GroupBox Header="できないこと">
+                        <GroupBox Header="{local:T 'できないこと'}">
                             <StackPanel>
                                 <TextBlock TextWrapping="Wrap" FontSize="11"
-                                           Text="・排他フルスクリーンのゲームには重ねられません。ゲーム側の表示設定を「ボーダーレス」または「ウィンドウ」にしてください。" />
+                                           Text="{local:T '・排他フルスクリーンのゲームには重ねられません。ゲーム側の表示設定を「ボーダーレス」または「ウィンドウ」にしてください。'}" />
                                 <TextBlock TextWrapping="Wrap" FontSize="11" Margin="0,4,0,0"
-                                           Text="・映像から文字を読み取るため、記号やアイコンに似た文字があると誤読することがあります。" />
+                                           Text="{local:T '・映像から文字を読み取るため、記号やアイコンに似た文字があると誤読することがあります。'}" />
                                 <TextBlock Style="{StaticResource Hint}"
-                                           Text="数値が合わない行には、訳文の下に原文も表示します。" />
+                                           Text="{local:T '数値が合わない行には、訳文の下に原文も表示します。'}" />
                             </StackPanel>
                         </GroupBox>
 
@@ -419,7 +429,7 @@
         </TabControl>
 
         <!-- ===== 右: プレビュー（タブの外。範囲指定に要る） ===== -->
-        <GroupBox Grid.Row="0" Grid.Column="1" Header="プレビュー">
+        <GroupBox Grid.Row="0" Grid.Column="1" Header="{local:T 'プレビュー'}">
             <Grid>
                 <Border Background="#1E1E1E">
                     <Grid>
@@ -438,7 +448,7 @@
                 </Border>
                 <TextBlock x:Name="PreviewPlaceholder" Foreground="#888" FontSize="13"
                            HorizontalAlignment="Center" VerticalAlignment="Center"
-                           Text="対象を選んで「画面を翻訳」を押してください" />
+                           Text="{local:T '対象を選んで「画面を翻訳」を押してください'}" />
             </Grid>
         </GroupBox>
 
@@ -446,29 +456,29 @@
         <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,12,0,0">
 
             <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                <Button x:Name="TranslateScreenButton" Content="画面を翻訳" Click="OnTranslateScreenClick"
+                <Button x:Name="TranslateScreenButton" Content="{local:T '画面を翻訳'}" Click="OnTranslateScreenClick"
                         FontWeight="SemiBold" Padding="16,6" />
-                <Button x:Name="OverlayHideButton" Content="訳文を消す" Click="OnOverlayHideClick"
+                <Button x:Name="OverlayHideButton" Content="{local:T '訳文を消す'}" Click="OnOverlayHideClick"
                         IsEnabled="False" />
                 <TextBlock VerticalAlignment="Center" Foreground="#666" FontSize="11" Margin="8,0,0,0"
                            TextWrapping="Wrap"
-                           Text="ゲーム中はホットキーで同じことができます。この画面は出していなくて構いません。" />
+                           Text="{local:T 'ゲーム中はホットキーで同じことができます。この画面は出していなくて構いません。'}" />
             </StackPanel>
 
             <!-- 検証用。ふだんは畳んでおく。工程ごとに切り分けて見るためのもので、
                  日常の操作ではない（上の「画面を翻訳」が一括で行う）。 -->
-            <Expander Header="工程ごとに実行する（動作確認用）" Margin="0,0,0,8">
+            <Expander Header="{local:T '工程ごとに実行する（動作確認用）'}" Margin="0,0,0,8">
                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                    <Button x:Name="CaptureNowButton" Content="今すぐキャプチャ" Click="OnCaptureNowClick" />
-                    <Button x:Name="CaptureDelayedButton" Content="5秒後にキャプチャ"
+                    <Button x:Name="CaptureNowButton" Content="{local:T '今すぐキャプチャ'}" Click="OnCaptureNowClick" />
+                    <Button x:Name="CaptureDelayedButton" Content="{local:T '5秒後にキャプチャ'}"
                             Click="OnCaptureDelayedClick" />
-                    <Button x:Name="OcrButton" Content="OCR を実行" Click="OnOcrClick" IsEnabled="False" />
-                    <Button x:Name="TranslateButton" Content="翻訳を実行" Click="OnTranslateClick"
+                    <Button x:Name="OcrButton" Content="{local:T 'OCR を実行'}" Click="OnOcrClick" IsEnabled="False" />
+                    <Button x:Name="TranslateButton" Content="{local:T '翻訳を実行'}" Click="OnTranslateClick"
                             IsEnabled="False" />
-                    <Button x:Name="OverlayButton" Content="オーバーレイ表示" Click="OnOverlayClick"
+                    <Button x:Name="OverlayButton" Content="{local:T 'オーバーレイ表示'}" Click="OnOverlayClick"
                             IsEnabled="False" />
-                    <Button x:Name="SaveButton" Content="PNG で保存" Click="OnSaveClick" IsEnabled="False" />
-                    <Button Content="保存フォルダを開く" Click="OnOpenFolderClick" />
+                    <Button x:Name="SaveButton" Content="{local:T 'PNG で保存'}" Click="OnSaveClick" IsEnabled="False" />
+                    <Button Content="{local:T '保存フォルダを開く'}" Click="OnOpenFolderClick" />
                 </StackPanel>
             </Expander>
 
@@ -482,7 +492,7 @@
                 </ScrollViewer>
             </Border>
 
-            <TextBlock x:Name="StatusText" Margin="2,8,0,0" FontSize="12" Text="準備完了" />
+            <TextBlock x:Name="StatusText" Margin="2,8,0,0" FontSize="12" Text="{local:T '準備完了'}" />
         </StackPanel>
     </Grid>
 </Window>

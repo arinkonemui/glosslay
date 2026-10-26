@@ -1,12 +1,15 @@
 using System.Globalization;
 using System.Diagnostics;
+using System.Net;
 using System.Text;
+using System.Text.RegularExpressions;
 using Glosslay.Ads;
 using Glosslay.Configuration;
 using Glosslay.Entitlement;
 using Glosslay.Capture;
 using Glosslay.Imaging;
 using Glosslay.Input;
+using Glosslay.Localization;
 using Glosslay.Monitoring;
 using Glosslay.Ocr;
 using Glosslay.Profiles;
@@ -27,7 +30,7 @@ namespace Glosslay.Bench;
 /// <para>速度は性能要件 1.5 秒の判定材料（PLAN.md 課題4）。
 /// 撮影 290ms + OCR 551ms（カーソル窓）に足して 1.5 秒に収まるかを見る。</para>
 /// </remarks>
-internal static class Program
+internal static partial class Program
 {
     /// <summary>P0-7 のサンプルから採った実際の画面テキスト。</summary>
     /// <remarks>
@@ -152,6 +155,12 @@ internal static class Program
         if (args.Contains("--languages", StringComparer.Ordinal))
         {
             return await CheckLanguagesAsync().ConfigureAwait(false);
+        }
+
+        // --ui: 画面の文言の言語（FR-SYS-03 / FR-SYS-05）を確かめる。ソースの文すべてに訳があるか。モデルを読まない。
+        if (args.Contains("--ui", StringComparer.Ordinal))
+        {
+            return CheckUi();
         }
 
         // --timing: 処理時間の実測表示（FR-OVL-10）の数え方と文面を確かめる。モデルを読まない。
@@ -874,6 +883,361 @@ internal static class Program
         Console.WriteLine(failures == 0 ? "すべて期待どおり。" : $"★ {failures} 件が期待と違う。");
         return failures == 0 ? 0 : 1;
     }
+
+    /// <summary>
+    /// 画面の文言の言語（FR-SYS-03 / FR-SYS-05）を確かめる。モデルを読まない。
+    /// </summary>
+    /// <remarks>
+    /// <para><b>日本語の文がそのまま鍵なので、コードの文を直すと訳が黙って外れる</b>
+    /// （日本語のまま出るだけで、例外にはならない）。ソースから <c>T("…")</c> と
+    /// <c>{local:T '…'}</c> を拾い、どの言語の表にも訳があるかを見る。</para>
+    /// <para><b>訳文の <c>{0}</c> が鍵と食い違うと、その文を出したときに落ちる</b>
+    /// （<see cref="FormatException"/>）。差し込み箇所が揃っているかと、実際に差し込めるかも見る。</para>
+    /// </remarks>
+    private static int CheckUi()
+    {
+        var failures = 0;
+
+        void Check(string label, bool ok, string detail = "")
+        {
+            if (!ok)
+            {
+                failures++;
+            }
+
+            Console.WriteLine($"  {(ok ? "  " : "★ ")}{label,-44} {(ok ? "OK" : "NG"),-4}{detail}");
+        }
+
+        static string Head(IReadOnlyList<string> items) =>
+            string.Join(" / ", items.Take(3)) + (items.Count > 3 ? $" ほか {items.Count - 3} 件" : string.Empty);
+
+        var root = AppContext.BaseDirectory;
+        while (root is not null && !File.Exists(Path.Combine(root, "Glosslay.slnx")))
+        {
+            root = Path.GetDirectoryName(root);
+        }
+
+        if (root is null)
+        {
+            Console.WriteLine("リポジトリが見つかりません（Glosslay.slnx を上にたどって探す）。");
+            return 1;
+        }
+
+        var interpolated = new List<string>();
+        var continued = new HashSet<string>(StringComparer.Ordinal);
+        var used = CollectUiKeys(Path.Combine(root, "src"), interpolated, continued);
+
+        // 変数を通して引く文。ソースを読んでも拾えない。
+        // ホットキーの名前と説明（RawInputTrigger）・認識モデルの名前（PaddleOcrEngine.Name）・言語の呼び名（Languages.NameOf）。
+        used.UnionWith(
+        [
+            "翻訳キー", "前面の画面を翻訳して、原文の位置に重ねる",
+            "カーソル翻訳キー", "カーソルの周囲だけを翻訳する",
+            "ON/OFF キー", "重ねた訳文を消す / 出し直す",
+        ]);
+        foreach (var tag in new[] { "ja", "en", "zh", "zh-Hans", "ko" })
+        {
+            used.Add(PaddleOcrOptions.ForSourceLanguage(tag).RecognitionModelName);
+            used.Add(Languages.PromptNameOf(tag));
+        }
+
+        Console.WriteLine("=== 鍵（ソースの T(\"…\") と {local:T '…'}・変数で引く文）===");
+        Console.WriteLine($"  {used.Count} 件");
+        Check("差し込み済みの文を鍵にしていない（T($\"…\")）", interpolated.Count == 0, interpolated.Count == 0 ? string.Empty : $"← {Head(interpolated)}");
+
+        foreach (var tag in UiText.Supported.Where(t => t != "ja"))
+        {
+            Console.WriteLine();
+            Console.WriteLine($"=== {tag} ===");
+
+            var table = UiText.TableFor(tag);
+            var missing = used.Where(k => !table.ContainsKey(k)).Order(StringComparer.Ordinal).ToList();
+            var stale = table.Keys.Where(k => !used.Contains(k)).Order(StringComparer.Ordinal).ToList();
+            var empty = table.Where(p => p.Value.Length == 0).Select(p => p.Key).ToList();
+            var kana = table.Where(p => JapaneseKana().IsMatch(p.Value)).Select(p => p.Value).ToList();
+            var mismatched = table.Where(p => !SamePlaceholders(p.Key, p.Value)).Select(p => p.Value).ToList();
+            var broken = table.Where(p => !Formats(p.Value)).Select(p => p.Value).ToList();
+
+            Check("ソースの文すべてに訳がある", missing.Count == 0, missing.Count == 0 ? $"{table.Count} 件" : $"← 無い {missing.Count} 件: {Head(missing)}");
+            Check("使われていない訳が無い（文を直した後の残り）", stale.Count == 0, stale.Count == 0 ? string.Empty : $"← {Head(stale)}");
+            Check("空の訳が無い", empty.Count == 0, empty.Count == 0 ? string.Empty : $"← {Head(empty)}");
+            Check("訳にかな・中黒「・」が残っていない", kana.Count == 0, kana.Count == 0 ? string.Empty : $"← {Head(kana)}");
+            Check("差し込み箇所 {0} が鍵と同じ", mismatched.Count == 0, mismatched.Count == 0 ? string.Empty : $"← {Head(mismatched)}");
+            Check("差し込んでも落ちない", broken.Count == 0, broken.Count == 0 ? string.Empty : $"← {Head(broken)}");
+
+            if (tag == "en")
+            {
+                var wide = table.Where(p => FullWidth().IsMatch(p.Value)).Select(p => p.Value).ToList();
+                Check("英語の訳に漢字・全角の記号が無い", wide.Count == 0, wide.Count == 0 ? string.Empty : $"← {Head(wide)}");
+            }
+
+            // 日本語・中国語は文を詰めてつなぐが、英語・韓国語は空白が要る（「….The source …」になる）。
+            if (tag is "en" or "ko")
+            {
+                var glued = continued
+                    .Where(k => table.TryGetValue(k, out var v) && !char.IsWhiteSpace(v.FirstOrDefault(' ')) && !GluedOnPurpose(k, tag))
+                    .Select(k => table[k])
+                    .Order(StringComparer.Ordinal)
+                    .ToList();
+                Check($"前の文につなぐ訳は空白で始まる（{continued.Count} 件）", glued.Count == 0, glued.Count == 0 ? string.Empty : $"← {Head(glued)}");
+            }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("=== 切り替え ===");
+
+        var changed = 0;
+        void OnChanged(object? sender, EventArgs e) => changed++;
+        UiText.LanguageChanged += OnChanged;
+        try
+        {
+            UiText.SetLanguage("en");
+            Check("英語にすると英語で出る", UiText.Language == "en" && UiText.T("設定") == "Settings", $"← {UiText.T("設定")}");
+            Check("変わったと知らせる（画面が文言を引き直す）", changed == 1, $"← {changed} 回");
+            UiText.SetLanguage("en");
+            Check("同じ言語なら知らせない", changed == 1, $"← {changed} 回");
+            Check("表に無い文は日本語のまま出す", UiText.T("表に無い文") == "表に無い文");
+            Check("差し込みも訳文の側で", UiText.T("翻訳完了: {0:F0} ms", 812.4) == "Translation done: 812 ms", $"← {UiText.T("翻訳完了: {0:F0} ms", 812.4)}");
+            Check("言語の呼び名は画面の言語で", Languages.PairName("ko", "en") == "Korean→English", $"← {Languages.PairName("ko", "en")}");
+
+            var prompt = LineTranslation.BuildRequestText(["Attack Power"], "en", "ja");
+            Check("クラウドへの指示文は日本語のまま", prompt.Contains("英語から日本語へ", StringComparison.Ordinal), $"← {prompt.Split('\n')[0]}");
+
+            using (var trigger = new RawInputTrigger(new HotkeyOptions()))
+            {
+                var described = string.Join(" / ", trigger.Descriptions.Prepend(trigger.Name));
+                Check("ホットキーの説明も画面の言語で", !FullWidth().IsMatch(described), $"← {described}");
+            }
+
+            var notice = AutoWatchNotice.Build(new AutoWatchOptions(), hasRegion: false);
+            Check("自動監視の案内も画面の言語で", !FullWidth().IsMatch(notice), FullWidth().IsMatch(notice) ? $"← {notice.Split('\n')[0]}" : string.Empty);
+
+            UiText.SetLanguage("ko");
+            Check("韓国語", UiText.T("設定") == "설정" && Languages.NameOf("ja") == "일본어", $"← {UiText.T("設定")} / {Languages.NameOf("ja")}");
+            Check("指示文の言語の呼び名は日本語のまま", Languages.PromptNameOf("ko") == "韓国語");
+
+            UiText.SetLanguage("zh-Hant");
+            Check("繁体字は簡体字の画面で出す（2026-10-24）", UiText.Language == "zh-Hans" && UiText.T("設定") == "设置", $"← {UiText.Language} / {UiText.T("設定")}");
+
+            UiText.SetLanguage("de");
+            Check("持っていない言語は英語で出す", UiText.Language == "en" && UiText.T("設定") == "Settings", $"← {UiText.Language}");
+
+            UiText.SetLanguage("ja");
+            Check("日本語に戻すと日本語", UiText.Language == "ja" && UiText.T("設定") == "設定", $"← {UiText.T("設定")}");
+            Check("知らせた回数", changed == 5, $"← {changed} 回");
+        }
+        finally
+        {
+            UiText.LanguageChanged -= OnChanged;
+            UiText.SetLanguage("ja");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine(failures == 0 ? "すべて期待どおり。" : $"★ {failures} 件が期待と違う。");
+        return failures == 0 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// 前の文につないでも空白で始めなくてよい鍵。
+    /// </summary>
+    /// <remarks>
+    /// 前に来る文が空白・改行で終わっているもの（「文字 {0} / 」「…\n」「…, and 」）と、
+    /// 韓国語で括弧を語に付けて書くもの。
+    /// </remarks>
+    private static bool GluedOnPurpose(string key, string tag) => key switch
+    {
+        "{0:F0} 秒で消える" or "{0}はクラウド翻訳でのみ訳せます" or "原文に無い数値が {0} 件 → {1} 件に増えます。" => true,
+        "（{0}）。" => tag == "ko",
+        _ => false,
+    };
+
+    /// <summary>ソースの <c>T("…")</c> と XAML の <c>{local:T '…'}</c> から鍵を集める。</summary>
+    /// <param name="sourceRoot">src の場所。</param>
+    /// <param name="interpolated">差し込んだ後の文を鍵にしている箇所。</param>
+    /// <param name="continued">
+    /// 前の文につなげて出す鍵（<c>a + T("…")</c> と <c>a + (c ? T("…") : …)</c>）。
+    /// </param>
+    private static HashSet<string> CollectUiKeys(string sourceRoot, List<string> interpolated, HashSet<string> continued)
+    {
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var path in Directory.EnumerateFiles(sourceRoot, "*.*", SearchOption.AllDirectories))
+        {
+            var parts = path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (parts.Contains("bin") || parts.Contains("obj"))
+            {
+                continue;
+            }
+
+            if (path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+            {
+                // コメントの行は見ない（説明に T("…") と書いてある）。
+                var text = string.Join('\n', File.ReadLines(path).Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)));
+                keys.UnionWith(CsKey().Matches(text).Select(m => UnescapeCs(m.Groups[1].Value)));
+                interpolated.AddRange(CsBuiltKey().Matches(text).Select(m => $"{Path.GetFileName(path)}: {m.Value}"));
+
+                // 文字列の中の括弧で数え違えないよう、中身を伏せてから前を見る（長さは変えない）。
+                var masked = CsLiteral().Replace(text, m => m.Value[0] + new string('x', m.Length - 2) + m.Value[^1]);
+                continued.UnionWith(CsKey().Matches(text)
+                    .Where(m => IsContinuation(masked, m.Index))
+                    .Select(m => UnescapeCs(m.Groups[1].Value)));
+            }
+            else if (path.EndsWith(".xaml", StringComparison.OrdinalIgnoreCase))
+            {
+                // XML の文字参照を戻してから、マークアップ拡張の「\」を外す（WPF が読む順）。
+                var text = WebUtility.HtmlDecode(File.ReadAllText(path));
+                keys.UnionWith(XamlKey().Matches(text).Select(m => UnescapeXaml(m.Groups[1].Value)));
+            }
+        }
+
+        return keys;
+    }
+
+    /// <summary>
+    /// <paramref name="index"/> の <c>T(</c> が <c>+</c> の右か、<c>+ (c ? … : …)</c> の三項の中か。
+    /// </summary>
+    private static bool IsContinuation(string masked, int index)
+    {
+        static int Previous(string s, int i)
+        {
+            i--;
+            while (i >= 0 && char.IsWhiteSpace(s[i]))
+            {
+                i--;
+            }
+
+            return i;
+        }
+
+        var at = Previous(masked, index);
+        if (at < 0)
+        {
+            return false;
+        }
+
+        if (masked[at] == '+')
+        {
+            return true;
+        }
+
+        if (masked[at] is not ('?' or ':'))
+        {
+            return false;
+        }
+
+        // 囲んでいる ( まで戻り、その前が + かを見る。
+        var depth = 0;
+        for (var i = at; i >= 0; i--)
+        {
+            switch (masked[i])
+            {
+                case ')':
+                    depth++;
+                    break;
+                case '(' when depth == 0:
+                    var before = Previous(masked, i);
+                    return before >= 0 && masked[before] == '+';
+                case '(':
+                    depth--;
+                    break;
+                case ';' or '{' or '}' when depth == 0:
+                    return false;
+            }
+        }
+
+        return false;
+    }
+
+    private static string UnescapeCs(string literal)
+    {
+        var builder = new StringBuilder(literal.Length);
+        for (var i = 0; i < literal.Length; i++)
+        {
+            if (literal[i] != '\\' || i + 1 == literal.Length)
+            {
+                builder.Append(literal[i]);
+                continue;
+            }
+
+            i++;
+            builder.Append(literal[i] switch
+            {
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                '0' => '\0',
+                var c => c,
+            });
+        }
+
+        return builder.ToString();
+    }
+
+    private static string UnescapeXaml(string literal)
+    {
+        var builder = new StringBuilder(literal.Length);
+        for (var i = 0; i < literal.Length; i++)
+        {
+            if (literal[i] == '\\' && i + 1 < literal.Length)
+            {
+                i++;
+            }
+
+            builder.Append(literal[i]);
+        }
+
+        return builder.ToString();
+    }
+
+    private static bool SamePlaceholders(string key, string translated) =>
+        Placeholder().Matches(key).Select(m => m.Value).Order(StringComparer.Ordinal)
+            .SequenceEqual(Placeholder().Matches(translated).Select(m => m.Value).Order(StringComparer.Ordinal));
+
+    /// <summary>差し込み箇所があれば、数を揃えた値で実際に差し込んでみる。</summary>
+    private static bool Formats(string translated)
+    {
+        var count = Placeholder().Matches(translated)
+            .Select(m => int.Parse(m.Value.AsSpan(1, m.Value.IndexOfAny([',', ':', '}']) - 1), CultureInfo.InvariantCulture) + 1)
+            .DefaultIfEmpty(0)
+            .Max();
+        if (count == 0)
+        {
+            return true;
+        }
+
+        try
+        {
+            _ = string.Format(CultureInfo.InvariantCulture, translated, Enumerable.Repeat<object?>(1.5, count).ToArray());
+            return true;
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+    }
+
+    [GeneratedRegex(@"(?<![A-Za-z0-9_])T\(\s*""((?:[^""\\\n]|\\.)*)""")]
+    private static partial Regex CsKey();
+
+    /// <summary><c>T($"…")</c> / <c>T(@"…")</c>。差し込んだ後の文は表のどの鍵とも一致しない。</summary>
+    [GeneratedRegex(@"(?<![A-Za-z0-9_])T\(\s*[$@]+""")]
+    private static partial Regex CsBuiltKey();
+
+    /// <summary>文字列と文字のリテラル（逐語的文字列は使っていない）。</summary>
+    [GeneratedRegex(@"""(?:[^""\\\n]|\\.)*""|'(?:[^'\\\n]|\\.)'")]
+    private static partial Regex CsLiteral();
+
+    [GeneratedRegex(@"\{local:T '((?:[^'\\]|\\.)*)'\}")]
+    private static partial Regex XamlKey();
+
+    [GeneratedRegex(@"\{\d+(?:[,:][^{}]*)?\}")]
+    private static partial Regex Placeholder();
+
+    /// <summary>かなと中黒「・」（カタカナの区画）。</summary>
+    [GeneratedRegex(@"\p{IsHiragana}|\p{IsKatakana}")]
+    private static partial Regex JapaneseKana();
+
+    [GeneratedRegex(@"\p{IsHiragana}|\p{IsKatakana}|\p{IsCJKUnifiedIdeographs}|\p{IsCJKSymbolsandPunctuation}|\p{IsHalfwidthandFullwidthForms}")]
+    private static partial Regex FullWidth();
 
     /// <summary>
     /// 処理時間の実測表示（FR-OVL-10）の数え方と文面を確かめる。

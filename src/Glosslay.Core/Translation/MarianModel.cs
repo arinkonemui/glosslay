@@ -1,5 +1,6 @@
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
+using static Glosslay.Localization.UiText;
 
 namespace Glosslay.Translation;
 
@@ -68,8 +69,8 @@ internal sealed class MarianModel : IDisposable
         if (missing is not null)
         {
             throw new FileNotFoundException(
-                $"翻訳モデルが見つかりません: {missing}。"
-                + $"モデル一式を {directory} に配置してください。",
+                T("翻訳モデルが見つかりません: {0}。", missing)
+                + T("モデル一式を {0} に配置してください。", directory),
                 missing);
         }
 
@@ -94,7 +95,7 @@ internal sealed class MarianModel : IDisposable
         if (sourcePrefixToken is { Length: > 0 } token)
         {
             prefixId = tokenizer.IdOf(token) ?? throw new InvalidDataException(
-                $"訳先の印 {token} が語彙にありません（{directory}）。モデルが違うか、設定の印が誤っています。");
+                T("訳先の印 {0} が語彙にありません（{1}）。モデルが違うか、設定の印が誤っています。", token, directory));
         }
 
         var encoder = new InferenceSession(Path.Combine(directory, "encoder_model.onnx"), sessionOptions);

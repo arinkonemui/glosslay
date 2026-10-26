@@ -1,4 +1,5 @@
 using System.Globalization;
+using static Glosslay.Localization.UiText;
 
 namespace Glosslay.Monitoring;
 
@@ -73,12 +74,12 @@ public sealed class ProcessingTimeStats
         {
             if (ReadAverage is not { } readAverage || ReadRecentMax is not { } readMax)
             {
-                return "処理時間: まだ翻訳していません";
+                return T("処理時間: まだ翻訳していません");
             }
 
-            var line = $"読み取り 平均 {Milliseconds(readAverage)} / 直近最大 {Milliseconds(readMax)}";
+            var line = T("読み取り 平均 {0} / 直近最大 {1}", Milliseconds(readAverage), Milliseconds(readMax));
             return TranslationAverage is { } translation
-                ? line + $" ・ 翻訳 平均 {Milliseconds(translation)}"
+                ? line + T(" ・ 翻訳 平均 {0}", Milliseconds(translation))
                 : line;
         }
     }
